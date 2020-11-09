@@ -2,6 +2,7 @@ extern crate winapi;
 
 use self::winapi::um::winuser::CreateAcceleratorTableA;
 use crate::to_wstring;
+//use std::ffi::OsString;
 use std::io::Error;
 use std::ptr;
 use winapi::shared::minwindef::MAX_PATH;
@@ -34,16 +35,21 @@ pub fn get_volume_guid(drive: &str) -> Option<String> {
 pub fn get_file_read_handle(volume: &str) {
     unsafe {
         let handle = CreateFileW(
-            volume.as_ptr() as LPCWSTR,
+            to_wstring(volume).as_ptr(),
             GENERIC_READ,
             FILE_SHARE_READ,
             ptr::null_mut(),
             OPEN_EXISTING,
-            FILE_ATTRIBUTE_NORMAL,
+            0,
             ptr::null_mut(),
         );
+
         if handle == INVALID_HANDLE_VALUE {
-            println!("ain't got no valid handle");
+            let x = winapi::um::errhandlingapi::GetLastError();
+            println!(
+                "ain't got no valid handle\n{:#?}\nGetLastError == {:#x?}",
+                handle, x
+            );
         }
     }
 }
