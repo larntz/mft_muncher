@@ -6,19 +6,34 @@
 extern crate winapi;
 
 use std::ptr;
+use winapi::_core::i64;
 use winapi::shared::minwindef::MAX_PATH;
 use winapi::um::errhandlingapi::GetLastError;
 use winapi::um::fileapi::OPEN_EXISTING;
 use winapi::um::fileapi::{CreateFileW, GetVolumeNameForVolumeMountPointW};
+use winapi::um::handleapi::CloseHandle;
 use winapi::um::handleapi::INVALID_HANDLE_VALUE;
+use winapi::um::ioapiset::DeviceIoControl;
 use winapi::um::processthreadsapi::{GetCurrentProcess, OpenProcessToken};
 use winapi::um::securitybaseapi::AdjustTokenPrivileges;
 use winapi::um::winbase::LookupPrivilegeValueW;
+use winapi::um::winioctl::FSCTL_ENUM_USN_DATA;
+use winapi::um::winnt::{DWORDLONG, HANDLE, TOKEN_PRIVILEGES, USN};
 use winapi::um::winnt::{
     FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, GENERIC_READ, SE_PRIVILEGE_ENABLED,
     TOKEN_ADJUST_PRIVILEGES,
 };
-use winapi::um::winnt::{HANDLE, TOKEN_PRIVILEGES};
+
+/// Needed by DeviceIoControl() when reading the MFT
+///
+/// [MFT_ENUM_DATA_V0](https://docs.microsoft.com/en-us/windows/win32/api/winioctl/ns-winioctl-mft_enum_data_v0)
+#[allow(non_snake_case)]
+#[repr(C)]
+struct MFT_ENUM_DATA_V0 {
+    StartFileReferenceNumber: DWORDLONG,
+    LowUsn: USN,
+    HighUsn: USN,
+}
 
 /// Converts a &str to a wide OsStr (utf16)
 fn to_wstring(value: &str) -> Vec<u16> {
@@ -27,6 +42,15 @@ fn to_wstring(value: &str) -> Vec<u16> {
         .encode_wide()
         .chain(std::iter::once(0))
         .collect()
+}
+
+/// walk the master file table (MFT)
+pub fn read_mft(volume_handle: HANDLE) {
+    let in_buffer = MFT_ENUM_DATA_V0 {
+        StartFileReferenceNumber: 0,
+        LowUsn: 0,
+        HighUsn: i64::MAX,
+    };
 }
 
 /**
@@ -39,13 +63,9 @@ References:
 
 Steps to assert privileges
 
-1. Check what privileges we already have. If we have what we need do nothing.
-
-    a. get process token to the current process
-    b. create TOKEN_PRIVILEGES struct
-    c. set privileges
-
-2.
+1. get process token to the current process
+1. create TOKEN_PRIVILEGES struct
+1. set privileges
 
 */
 pub fn assert_security_privileges() {
@@ -93,17 +113,22 @@ pub fn assert_security_privileges() {
                 std::ptr::null_mut(),
             ) == 0
             {
-                println!("AdjustTokenPrivileges failed, error {}", GetLastError());
+                let e = GetLastError();
+                println!("AdjustTokenPrivileges failed, error {}", e);
                 println!("Unable to adjust privileges. Be sure to run with elevated permissions.");
-                std::process::exit(1300);
+                std::process::exit(e as i32);
             }
             if GetLastError() == 1300
             // ERROR_NOT_ALL_ASSIGNED
             {
-                println!("Unable to adjust privileges. Be sure to run with elevated permissions.");
+                println!(
+                    "\n*** Unable to adjust privileges. Try running as an administrator. ***\n"
+                );
                 std::process::exit(1300);
             }
         }
+        // close our process token handle
+        CloseHandle(proc_token);
     }
 }
 
