@@ -1,16 +1,15 @@
 extern crate winapi;
 
-use self::winapi::um::winuser::CreateAcceleratorTableA;
 use crate::to_wstring;
-//use std::ffi::OsString;
-use std::io::Error;
+// use std::ffi::OsString;
+// use std::io::Error;
 use std::ptr;
 use winapi::shared::minwindef::MAX_PATH;
 use winapi::um::fileapi::{CreateFileW, GetVolumeNameForVolumeMountPointW, OPEN_EXISTING};
 use winapi::um::handleapi::INVALID_HANDLE_VALUE;
 use winapi::um::winnt::LPCWSTR;
 use winapi::um::winnt::{
-    FILE_ATTRIBUTE_NORMAL, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, GENERIC_READ,
+    FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, GENERIC_READ
 };
 
 pub fn get_volume_guid(drive: &str) -> Option<String> {
