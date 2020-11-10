@@ -9,7 +9,9 @@ use winapi::shared::minwindef::MAX_PATH;
 use winapi::um::fileapi::{CreateFileW, GetVolumeNameForVolumeMountPointW, OPEN_EXISTING};
 use winapi::um::handleapi::INVALID_HANDLE_VALUE;
 use winapi::um::winnt::LPCWSTR;
-use winapi::um::winnt::{FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, GENERIC_READ};
+use winapi::um::winnt::{
+    FILE_ATTRIBUTE_NORMAL, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, GENERIC_READ,
+};
 
 pub fn get_volume_guid(drive: &str) -> Option<String> {
     unsafe {
@@ -37,7 +39,8 @@ pub fn get_file_read_handle(volume: &str) {
         let handle = CreateFileW(
             to_wstring(volume).as_ptr(),
             GENERIC_READ,
-            FILE_SHARE_READ,
+            // opening with FILE_SHARE_READ only gives a ERROR_SHARING_VIOLATION error
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
             ptr::null_mut(),
             OPEN_EXISTING,
             0,
@@ -50,6 +53,8 @@ pub fn get_file_read_handle(volume: &str) {
                 "ain't got no valid handle\n{:#?}\nGetLastError == {:#x?}",
                 handle, x
             );
+        } else {
+            println!("we got handle {:#?}", handle)
         }
     }
 }
