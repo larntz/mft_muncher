@@ -94,11 +94,13 @@ pub fn assert_security_privileges() {
             ) == 0
             {
                 println!("AdjustTokenPrivileges failed, error {}", GetLastError());
+                println!("Unable to adjust privileges. Be sure to run with elevated permissions.");
+                std::process::exit(1300);
             }
             if GetLastError() == 1300
             // ERROR_NOT_ALL_ASSIGNED
             {
-                eprintln!("Unable to adjust privileges. Be sure to run with elevated permissions.");
+                println!("Unable to adjust privileges. Be sure to run with elevated permissions.");
                 std::process::exit(1300);
             }
         }
