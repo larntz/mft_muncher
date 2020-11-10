@@ -8,7 +8,7 @@ extern crate winapi;
 use std::mem;
 use std::ptr;
 use winapi::_core::i64;
-use winapi::shared::minwindef::MAX_PATH;
+use winapi::shared::minwindef::{DWORD, MAX_PATH, WORD};
 use winapi::um::errhandlingapi::GetLastError;
 use winapi::um::fileapi::OPEN_EXISTING;
 use winapi::um::fileapi::{CreateFileW, GetVolumeNameForVolumeMountPointW};
@@ -19,7 +19,7 @@ use winapi::um::processthreadsapi::{GetCurrentProcess, OpenProcessToken};
 use winapi::um::securitybaseapi::AdjustTokenPrivileges;
 use winapi::um::winbase::LookupPrivilegeValueW;
 use winapi::um::winioctl::FSCTL_ENUM_USN_DATA;
-use winapi::um::winnt::{DWORDLONG, HANDLE, TOKEN_PRIVILEGES, USN};
+use winapi::um::winnt::{DWORDLONG, HANDLE, LARGE_INTEGER, TOKEN_PRIVILEGES, USN, WCHAR};
 use winapi::um::winnt::{
     FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, GENERIC_READ, SE_PRIVILEGE_ENABLED,
     TOKEN_ADJUST_PRIVILEGES,
@@ -47,7 +47,7 @@ fn to_wstring(value: &str) -> Vec<u16> {
 
 /// walk the master file table (MFT)
 pub fn read_mft(volume_handle: HANDLE) {
-    let mut output_buffer = [0u8; 1024 * 1024]; // data out from DeviceIoControl()
+    let mut output_buffer = [0u8; 1024 * 6]; // data out from DeviceIoControl()
     let mut input_buffer = MFT_ENUM_DATA_V0 {
         // into DeviceIoControl()
         StartFileReferenceNumber: 0,
@@ -57,7 +57,7 @@ pub fn read_mft(volume_handle: HANDLE) {
 
     unsafe {
         use winapi::ctypes::c_void;
-        let mut bytes_read = 0;
+        let mut bytes_read: u32 = 0;
         // https://github.com/forensicmatt/RsWindowsThingies/blob/e9bbb44130fb54eb38c39f88082f33b5c86b9196/src/usn/winioctrl.rs#L75
         if DeviceIoControl(
             volume_handle,
@@ -66,12 +66,85 @@ pub fn read_mft(volume_handle: HANDLE) {
             mem::size_of::<MFT_ENUM_DATA_V0>() as u32,
             output_buffer.as_mut_ptr() as *mut c_void,
             output_buffer.len() as u32,
-            bytes_read as *mut u32,
+            &mut bytes_read as *mut u32,
             ptr::null_mut(),
         ) == 0
         {
             println!("DeviceIoControl failed. Error {}", GetLastError());
+            std::process::exit(GetLastError() as i32);
         }
+
+        // println!(
+        //     "mem::size_of::<MFT_ENUM_DATA_V0>() as u32 = {:#?}",
+        //     mem::size_of::<MFT_ENUM_DATA_V0>() as u32
+        // );
+        // println!("output_buffer {:?}", output_buffer);
+        println!("bytes_read {}", bytes_read);
+
+        // println!("WORD length = {}", std::mem::size_of::<WORD>());
+        // println!("WCHAR length = {}", std::mem::size_of::<WCHAR>());
+        // println!("DWORD length = {}", std::mem::size_of::<DWORD>());
+        // println!("DWORDLONG length = {}", std::mem::size_of::<DWORDLONG>());
+        // println!(
+        //     "LARGE_INTEGER length = {}",
+        //     std::mem::size_of::<LARGE_INTEGER>()
+        // );
+
+        println!("=============");
+        let mut record_length = [0u8; 4];
+        record_length.clone_from_slice(&output_buffer[0..4]);
+        println!(
+            "record_length = {}, {} bytes, {:?}",
+            u32::from_be_bytes(record_length),
+            record_length.len(),
+            record_length
+        );
+
+        let mut major_version = [0u8; 2];
+        major_version.clone_from_slice(&output_buffer[5..7]);
+        println!(
+            "major_version {}, {} bytes",
+            u16::from_be_bytes(major_version),
+            major_version.len()
+        );
+
+        let mut minor_version = [0u8; 2];
+        minor_version.clone_from_slice(&output_buffer[8..10]);
+        println!(
+            "minor_version {}, {} bytes",
+            u16::from_be_bytes(minor_version),
+            minor_version.len()
+        );
+
+        let mut filename_length = [0u8; 2];
+        filename_length.clone_from_slice(&output_buffer[67..69]);
+        println!(
+            "filename_length {}, {} bytes",
+            u16::from_be_bytes(filename_length),
+            filename_length.len()
+        );
+
+        let mut filename = [0u8; 36];
+        filename.clone_from_slice(&output_buffer[73..109]);
+        let x = String::from_utf8(filename.to_vec()).unwrap();
+        println!("filename {}\n{}", x, filename.len());
+
+        // typedef struct {
+        //     DWORD         RecordLength;                  4 bytes [0..4]
+        //     WORD          MajorVersion;                  2 bytes [5..7]
+        //     WORD          MinorVersion;                  2 bytes [8..10]
+        //     DWORDLONG     FileReferenceNumber;           8 bytes [11..19]
+        //     DWORDLONG     ParentFileReferenceNumber;     8 bytes [20..28]
+        //     USN           Usn;                           8 bytes [29..37]
+        //     LARGE_INTEGER TimeStamp;                     8 bytes [38..46]
+        //     DWORD         Reason;                        4 bytes [47..51]
+        //     DWORD         SourceInfo;                    4 bytes [52..56]
+        //     DWORD         SecurityId;                    4 bytes [57..61]
+        //     DWORD         FileAttributes;                4 bytes [62..66]
+        //     WORD          FileNameLength;                2 bytes [67..69]
+        //     WORD          FileNameOffset;                2 bytes [70..72]
+        //     WCHAR         FileName[1];                   ? bytes [73..73+FileNameLength]
+        // } USN_RECORD_V2, *PUSN_RECORD_V2;
     }
 }
 
@@ -192,7 +265,7 @@ points to the root directory of the volume instead of the volume itself.
 Example volume GUID: `\\?\Volume{6eb8a49a-0000-0000-0000-300300000000}`
 
 */
-pub fn get_file_read_handle(volume: &str) {
+pub fn get_file_read_handle(volume: &str) -> Option<HANDLE> {
     unsafe {
         let handle = CreateFileW(
             to_wstring(volume).as_ptr(),
@@ -210,5 +283,6 @@ pub fn get_file_read_handle(volume: &str) {
             println!("invalid handle value: {:#?}, error == {:#?}", handle, x);
             println!("See https://docs.microsoft.com/en-us/windows/win32/debug/system-error-codes");
         }
+        Some(handle)
     }
 }
