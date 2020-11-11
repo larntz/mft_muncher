@@ -5,6 +5,7 @@
 
 extern crate winapi;
 
+use std::mem;
 use std::ptr;
 use winapi::_core::i64;
 use winapi::shared::minwindef::MAX_PATH;
@@ -46,11 +47,32 @@ fn to_wstring(value: &str) -> Vec<u16> {
 
 /// walk the master file table (MFT)
 pub fn read_mft(volume_handle: HANDLE) {
-    let in_buffer = MFT_ENUM_DATA_V0 {
+    let mut output_buffer = [0u8; 1024 * 1024]; // data out from DeviceIoControl()
+    let mut input_buffer = MFT_ENUM_DATA_V0 {
+        // into DeviceIoControl()
         StartFileReferenceNumber: 0,
         LowUsn: 0,
         HighUsn: i64::MAX,
     };
+
+    unsafe {
+        use winapi::ctypes::c_void;
+        let mut bytes_read = 0;
+        // https://github.com/forensicmatt/RsWindowsThingies/blob/e9bbb44130fb54eb38c39f88082f33b5c86b9196/src/usn/winioctrl.rs#L75
+        if DeviceIoControl(
+            volume_handle,
+            FSCTL_ENUM_USN_DATA,
+            &mut input_buffer.StartFileReferenceNumber as *mut _ as *mut c_void, // what does this do?
+            mem::size_of::<MFT_ENUM_DATA_V0>() as u32,
+            output_buffer.as_mut_ptr() as *mut c_void,
+            output_buffer.len() as u32,
+            bytes_read as *mut u32,
+            ptr::null_mut(),
+        ) == 0
+        {
+            println!("DeviceIoControl failed. Error {}", GetLastError());
+        }
+    }
 }
 
 /**
