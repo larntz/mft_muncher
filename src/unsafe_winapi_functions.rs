@@ -8,7 +8,7 @@ extern crate winapi;
 use std::mem;
 use std::ptr;
 use winapi::_core::i64;
-use winapi::shared::minwindef::{DWORD, MAX_PATH, WORD};
+use winapi::shared::minwindef::{DWORD, LPDWORD, LPVOID, MAX_PATH, WORD};
 use winapi::um::errhandlingapi::GetLastError;
 use winapi::um::fileapi::OPEN_EXISTING;
 use winapi::um::fileapi::{CreateFileW, GetVolumeNameForVolumeMountPointW};
@@ -36,6 +36,23 @@ struct MFT_ENUM_DATA_V0 {
     HighUsn: USN,
 }
 
+#[repr(C, packed)]
+pub struct USN_RECORD {
+    pub RecordLength: DWORD,
+    pub MajorVersion: WORD,
+    pub MinorVersion: WORD,
+    pub FileReferenceNumber: DWORDLONG,
+    pub ParentFileReferenceNumber: DWORDLONG,
+    pub Usn: USN,
+    pub TimeStamp: LARGE_INTEGER,
+    pub Reason: DWORD,
+    pub SourceInfo: DWORD,
+    pub SecurityId: DWORD,
+    pub FileAttributes: DWORD,
+    pub FileNameLength: WORD,
+    pub FileNameOffset: WORD,
+    pub FileName: [WCHAR; MAX_PATH + 1],
+}
 /// Converts a &str to a wide OsStr (utf16)
 fn to_wstring(value: &str) -> Vec<u16> {
     use std::os::windows::ffi::OsStrExt;
@@ -47,7 +64,7 @@ fn to_wstring(value: &str) -> Vec<u16> {
 
 /// walk the master file table (MFT)
 pub fn read_mft(volume_handle: HANDLE) {
-    let mut output_buffer = [0u8; 1024 * 6]; // data out from DeviceIoControl()
+    let mut output_buffer = [0u8; 1024 * 64]; // data out from DeviceIoControl()
     let mut input_buffer = MFT_ENUM_DATA_V0 {
         // into DeviceIoControl()
         StartFileReferenceNumber: 0,
@@ -55,96 +72,141 @@ pub fn read_mft(volume_handle: HANDLE) {
         HighUsn: i64::MAX,
     };
 
-    unsafe {
-        use winapi::ctypes::c_void;
-        let mut bytes_read: u32 = 0;
-        // https://github.com/forensicmatt/RsWindowsThingies/blob/e9bbb44130fb54eb38c39f88082f33b5c86b9196/src/usn/winioctrl.rs#L75
-        if DeviceIoControl(
-            volume_handle,
-            FSCTL_ENUM_USN_DATA,
-            &mut input_buffer.StartFileReferenceNumber as *mut _ as *mut c_void, // what does this do?
-            mem::size_of::<MFT_ENUM_DATA_V0>() as u32,
-            output_buffer.as_mut_ptr() as *mut c_void,
-            output_buffer.len() as u32,
-            &mut bytes_read as *mut u32,
-            ptr::null_mut(),
-        ) == 0
-        {
-            println!("DeviceIoControl failed. Error {}", GetLastError());
-            std::process::exit(GetLastError() as i32);
+    for _ in 0..=50 {
+        unsafe {
+            use winapi::ctypes::c_void;
+            let mut bytes_read: u32 = 0;
+            // https://github.com/forensicmatt/RsWindowsThingies/blob/e9bbb44130fb54eb38c39f88082f33b5c86b9196/src/usn/winioctrl.rs#L75
+            if DeviceIoControl(
+                volume_handle,
+                FSCTL_ENUM_USN_DATA,
+                //&mut input_buffer.StartFileReferenceNumber as *mut _ as *mut c_void, // what does this mean?
+                &input_buffer as *const MFT_ENUM_DATA_V0 as LPVOID, // what does this mean?
+                mem::size_of::<MFT_ENUM_DATA_V0>() as DWORD,
+                output_buffer.as_mut_ptr() as *mut USN_RECORD as LPVOID,
+                output_buffer.len() as DWORD,
+                &mut bytes_read as LPDWORD,
+                ptr::null_mut(),
+            ) == 0
+            {
+                println!("DeviceIoControl failed. Error {}", GetLastError());
+                std::process::exit(GetLastError() as i32);
+            }
+            let (head, body, _tail) = output_buffer.align_to::<USN_RECORD>();
+            if head.is_empty() {
+                println!("ouch");
+                //panic!("asdf");
+            }
+            println!("\n\n===================");
+            //println!("output_buffer: {:?}", output_buffer);
+            println!("bytes_read {}", bytes_read);
+            println!("body length = {}", body.len());
+            input_buffer.StartFileReferenceNumber = *(output_buffer.as_ptr() as *const u64);
+            println!(
+                "new StartFileReferenceNumber = {}",
+                input_buffer.StartFileReferenceNumber
+            );
+            for i in 0..body.len() {
+                println!(
+                    "gee whiz body[{}].RecordLength = {}",
+                    i, body[i].RecordLength
+                );
+                println!(
+                    "gee whiz body[{}].MajorVersion = {}",
+                    i, body[i].MajorVersion
+                );
+                println!(
+                    "gee whiz body[{}].MinorVersion = {}",
+                    i, body[i].MinorVersion
+                );
+                println!("gee whiz body[{}].Usn = {}", i, body[i].Usn);
+                println!("gee whiz body[{}].Reason = {}", i, body[i].Reason);
+                println!(
+                    "gee whiz body[{}].FileNameOffset = {}",
+                    i, body[i].FileNameOffset
+                );
+                println!(
+                    "gee whiz body[{}].FileNameLength = {}",
+                    i, body[i].FileNameLength
+                );
+                if body[i].FileNameLength > 0 && body[i].FileNameOffset > 0 {
+                    let x = String::from_utf16_lossy(
+                        &body[i].FileName[0..body[i].FileNameLength as usize],
+                    );
+                    println!("gee whiz body[{}].FileName = {}", i, x);
+                }
+            }
+            // println!(
+            //     "mem::size_of::<MFT_ENUM_DATA_V0>() as u32 = {:#?}",
+            //     mem::size_of::<MFT_ENUM_DATA_V0>() as u32
+            // );
+            // println!("output_buffer {:?}", output_buffer);
+
+            // println!("WORD length = {}", std::mem::size_of::<WORD>());
+            // println!("WCHAR length = {}", std::mem::size_of::<WCHAR>());
+            // println!("DWORD length = {}", std::mem::size_of::<DWORD>());
+            // println!("DWORDLONG length = {}", std::mem::size_of::<DWORDLONG>());
+            // println!(
+            //     "LARGE_INTEGER length = {}",
+            //     std::mem::size_of::<LARGE_INTEGER>()
+            // );
+
+            //println!("=============");
+            //let mut record_length = [0u8; 4];
+            //record_length.clone_from_slice(&output_buffer[0..4]);
+            //println!(
+            //    "record_length = {}, {} bytes, {:?}",
+            //    u32::from_be_bytes(record_length),
+            //    record_length.len(),
+            //    record_length
+            //);
+
+            //let mut major_version = [0u8; 2];
+            //major_version.clone_from_slice(&output_buffer[5..7]);
+            //println!(
+            //    "major_version {}, {} bytes",
+            //    u16::from_be_bytes(major_version),
+            //    major_version.len()
+            //);
+
+            //let mut minor_version = [0u8; 2];
+            //minor_version.clone_from_slice(&output_buffer[8..10]);
+            //println!(
+            //    "minor_version {}, {} bytes",
+            //    u16::from_be_bytes(minor_version),
+            //    minor_version.len()
+            //);
+
+            //let mut filename_length = [0u8; 2];
+            //filename_length.clone_from_slice(&output_buffer[67..69]);
+            //println!(
+            //    "filename_length {}, {} bytes",
+            //    u16::from_be_bytes(filename_length),
+            //    filename_length.len()
+            //);
+
+            //let mut filename = [0u8; 36];
+            //filename.clone_from_slice(&output_buffer[73..109]);
+            //let x = String::from_utf8(filename.to_vec()).unwrap();
+            //println!("filename {}\n{}", x, filename.len());
+
+            // typedef struct {
+            //     DWORD         RecordLength;                  4 bytes [0..4]
+            //     WORD          MajorVersion;                  2 bytes [5..7]
+            //     WORD          MinorVersion;                  2 bytes [8..10]
+            //     DWORDLONG     FileReferenceNumber;           8 bytes [11..19]
+            //     DWORDLONG     ParentFileReferenceNumber;     8 bytes [20..28]
+            //     USN           Usn;                           8 bytes [29..37]
+            //     LARGE_INTEGER TimeStamp;                     8 bytes [38..46]
+            //     DWORD         Reason;                        4 bytes [47..51]
+            //     DWORD         SourceInfo;                    4 bytes [52..56]
+            //     DWORD         SecurityId;                    4 bytes [57..61]
+            //     DWORD         FileAttributes;                4 bytes [62..66]
+            //     WORD          FileNameLength;                2 bytes [67..69]
+            //     WORD          FileNameOffset;                2 bytes [70..72]
+            //     WCHAR         FileName[1];                   ? bytes [73..73+FileNameLength]
+            // } USN_RECORD_V2, *PUSN_RECORD_V2;
         }
-
-        // println!(
-        //     "mem::size_of::<MFT_ENUM_DATA_V0>() as u32 = {:#?}",
-        //     mem::size_of::<MFT_ENUM_DATA_V0>() as u32
-        // );
-        // println!("output_buffer {:?}", output_buffer);
-        println!("bytes_read {}", bytes_read);
-
-        // println!("WORD length = {}", std::mem::size_of::<WORD>());
-        // println!("WCHAR length = {}", std::mem::size_of::<WCHAR>());
-        // println!("DWORD length = {}", std::mem::size_of::<DWORD>());
-        // println!("DWORDLONG length = {}", std::mem::size_of::<DWORDLONG>());
-        // println!(
-        //     "LARGE_INTEGER length = {}",
-        //     std::mem::size_of::<LARGE_INTEGER>()
-        // );
-
-        println!("=============");
-        let mut record_length = [0u8; 4];
-        record_length.clone_from_slice(&output_buffer[0..4]);
-        println!(
-            "record_length = {}, {} bytes, {:?}",
-            u32::from_be_bytes(record_length),
-            record_length.len(),
-            record_length
-        );
-
-        let mut major_version = [0u8; 2];
-        major_version.clone_from_slice(&output_buffer[5..7]);
-        println!(
-            "major_version {}, {} bytes",
-            u16::from_be_bytes(major_version),
-            major_version.len()
-        );
-
-        let mut minor_version = [0u8; 2];
-        minor_version.clone_from_slice(&output_buffer[8..10]);
-        println!(
-            "minor_version {}, {} bytes",
-            u16::from_be_bytes(minor_version),
-            minor_version.len()
-        );
-
-        let mut filename_length = [0u8; 2];
-        filename_length.clone_from_slice(&output_buffer[67..69]);
-        println!(
-            "filename_length {}, {} bytes",
-            u16::from_be_bytes(filename_length),
-            filename_length.len()
-        );
-
-        let mut filename = [0u8; 36];
-        filename.clone_from_slice(&output_buffer[73..109]);
-        let x = String::from_utf8(filename.to_vec()).unwrap();
-        println!("filename {}\n{}", x, filename.len());
-
-        // typedef struct {
-        //     DWORD         RecordLength;                  4 bytes [0..4]
-        //     WORD          MajorVersion;                  2 bytes [5..7]
-        //     WORD          MinorVersion;                  2 bytes [8..10]
-        //     DWORDLONG     FileReferenceNumber;           8 bytes [11..19]
-        //     DWORDLONG     ParentFileReferenceNumber;     8 bytes [20..28]
-        //     USN           Usn;                           8 bytes [29..37]
-        //     LARGE_INTEGER TimeStamp;                     8 bytes [38..46]
-        //     DWORD         Reason;                        4 bytes [47..51]
-        //     DWORD         SourceInfo;                    4 bytes [52..56]
-        //     DWORD         SecurityId;                    4 bytes [57..61]
-        //     DWORD         FileAttributes;                4 bytes [62..66]
-        //     WORD          FileNameLength;                2 bytes [67..69]
-        //     WORD          FileNameOffset;                2 bytes [70..72]
-        //     WCHAR         FileName[1];                   ? bytes [73..73+FileNameLength]
-        // } USN_RECORD_V2, *PUSN_RECORD_V2;
     }
 }
 
