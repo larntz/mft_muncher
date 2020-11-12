@@ -98,26 +98,25 @@ pub fn read_mft(volume_handle: HANDLE) {
                 println!("\nloop #: {}", looped);
                 println!("buffer_cursor = {}", buffer_cursor);
                 println!("bytes_read {}", bytes_read);
-
-                let mut record_length = [0u8; 4];
-                // record_length 4 bytes, [0..4]
-                record_length
-                    .clone_from_slice(&output_buffer[buffer_cursor + 0..buffer_cursor + 4]);
-
                 println!(
                     "current StartFileReferenceNumber = {}",
                     input_buffer.StartFileReferenceNumber
                 );
 
-                let mut next = [0u8; 8]; //output_buffer[0..8]
-                next.clone_from_slice(&output_buffer[0..8]);
-                input_buffer.StartFileReferenceNumber = u64::from_le_bytes(next) as DWORDLONG;
+                let mut next_start_file = [0u8; 8]; //output_buffer[0..8]
+                next_start_file.clone_from_slice(&output_buffer[0..8]);
+                input_buffer.StartFileReferenceNumber =
+                    u64::from_le_bytes(next_start_file) as DWORDLONG;
                 //u32::from_le_bytes(record_length) as DWORDLONG;
                 println!(
                     "next StartFileReferenceNumber = {}",
                     input_buffer.StartFileReferenceNumber
                 );
 
+                let mut record_length = [0u8; 4];
+                // record_length 4 bytes, [0..4]
+                record_length
+                    .clone_from_slice(&output_buffer[buffer_cursor + 0..buffer_cursor + 4]);
                 println!(
                     "record_length = {}, {} bytes, {:?}",
                     u32::from_le_bytes(record_length),
@@ -228,10 +227,17 @@ pub fn read_mft(volume_handle: HANDLE) {
                     let mut file_name: Vec<u8> = Vec::new();
                     let file_name_start = (60 + file_name_offset_u16) as usize;
                     let file_name_end = file_name_start + file_name_length_u16 as usize;
-                    println!(
-                        "{}",
-                        String::from_utf8_lossy(&output_buffer[file_name_start..file_name_end])
-                    );
+                    if file_name_end < output_buffer.len() {
+                        println!(
+                            "{}",
+                            String::from_utf8_lossy(&output_buffer[file_name_start..file_name_end])
+                        );
+                    } else {
+                        println!(
+                            "no file_name or file_name_end longer than output_buffer.len() {}",
+                            output_buffer.len()
+                        );
+                    }
                     println!("************************");
                 }
 
