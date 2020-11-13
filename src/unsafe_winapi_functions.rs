@@ -28,7 +28,6 @@ use winapi::um::winnt::{
 /// Needed by DeviceIoControl() when reading the MFT
 ///
 /// [MFT_ENUM_DATA_V0](https://docs.microsoft.com/en-us/windows/win32/api/winioctl/ns-winioctl-mft_enum_data_v0)
-#[allow(non_snake_case)]
 #[repr(C)]
 struct MFT_ENUM_DATA_V0 {
     StartFileReferenceNumber: DWORDLONG,
@@ -36,7 +35,8 @@ struct MFT_ENUM_DATA_V0 {
     HighUsn: USN,
 }
 
-#[repr(C, packed)]
+// https://github.com/netaneld122/ddup/blob/6aa8fe63fba1835e29d3e6e38f40d265a133184b/src/winioctl.rs#L35
+#[repr(C)]
 pub struct USN_RECORD {
     pub RecordLength: DWORD,
     pub MajorVersion: WORD,
@@ -51,7 +51,7 @@ pub struct USN_RECORD {
     pub FileAttributes: DWORD,
     pub FileNameLength: WORD,
     pub FileNameOffset: WORD,
-    pub FileName: Vec<u8>,
+    pub FileName: [WCHAR; 1],
 }
 /// Converts a &str to a wide OsStr (utf16)
 fn to_wstring(value: &str) -> Vec<u16> {
@@ -64,7 +64,7 @@ fn to_wstring(value: &str) -> Vec<u16> {
 
 /// walk the master file table (MFT)
 pub fn read_mft(volume_handle: HANDLE) {
-    let mut output_buffer = [0u8; 1024 * 64]; // data out from DeviceIoControl()
+    let mut output_buffer = [0u8; 1024 * 128]; // data out from DeviceIoControl()
     let mut input_buffer = MFT_ENUM_DATA_V0 {
         // into DeviceIoControl()
         StartFileReferenceNumber: 0,
@@ -74,8 +74,9 @@ pub fn read_mft(volume_handle: HANDLE) {
 
     for looped in 0..=500 {
         let mut buffer_cursor: usize = 8;
+        let mut bytes_read: u32 = 0;
+
         unsafe {
-            let mut bytes_read: u32 = 0;
             // https://github.com/forensicmatt/RsWindowsThingies/blob/e9bbb44130fb54eb38c39f88082f33b5c86b9196/src/usn/winioctrl.rs#L75
             if DeviceIoControl(
                 volume_handle,
@@ -89,302 +90,189 @@ pub fn read_mft(volume_handle: HANDLE) {
                 ptr::null_mut(),
             ) == 0
             {
-                println!("DeviceIoControl failed. Error {}", GetLastError());
-                std::process::exit(GetLastError() as i32);
-            }
-
-            while buffer_cursor < bytes_read as usize {
-                println!("\n\n===================");
-                println!("\nloop #: {}", looped);
-                println!("buffer_cursor = {}", buffer_cursor);
-                println!("bytes_read {}", bytes_read);
-                println!(
-                    "current StartFileReferenceNumber = {}",
-                    input_buffer.StartFileReferenceNumber
-                );
-
-                let mut next_start_file = [0u8; 8]; //output_buffer[0..8]
-                next_start_file.clone_from_slice(&output_buffer[0..8]);
-                input_buffer.StartFileReferenceNumber =
-                    u64::from_le_bytes(next_start_file) as DWORDLONG;
-                //u32::from_le_bytes(record_length) as DWORDLONG;
-                println!(
-                    "next StartFileReferenceNumber = {}",
-                    input_buffer.StartFileReferenceNumber
-                );
-
-                let mut record_length = [0u8; 4];
-                // record_length 4 bytes, [0..4]
-                record_length
-                    .clone_from_slice(&output_buffer[buffer_cursor + 0..buffer_cursor + 4]);
-                println!(
-                    "record_length = {}, {} bytes, {:?}",
-                    u32::from_le_bytes(record_length),
-                    record_length.len(),
-                    record_length
-                );
-
-                // 2 bytes
-                let mut major_version = [0u8; 2];
-                major_version
-                    .clone_from_slice(&output_buffer[buffer_cursor + 4..buffer_cursor + 6]);
-                println!(
-                    "major_version {}, {} bytes, {:?}",
-                    u16::from_le_bytes(major_version),
-                    major_version.len(),
-                    major_version
-                );
-                let mut minor_version = [0u8; 2];
-                minor_version
-                    .clone_from_slice(&output_buffer[buffer_cursor + 6..buffer_cursor + 8]);
-                println!(
-                    "minor_version {}, {} bytes, {:?}",
-                    u16::from_le_bytes(minor_version),
-                    minor_version.len(),
-                    minor_version
-                );
-                let mut file_reference_number = [0u8; 8];
-                file_reference_number
-                    .clone_from_slice(&output_buffer[buffer_cursor + 8..buffer_cursor + 16]);
-                println!(
-                    "file_reference_number {}, {} bytes, {:?}",
-                    u64::from_le_bytes(file_reference_number),
-                    file_reference_number.len(),
-                    file_reference_number
-                );
-                let mut parent_file_reference_number = [0u8; 8];
-                parent_file_reference_number
-                    .clone_from_slice(&output_buffer[buffer_cursor + 16..buffer_cursor + 24]);
-                println!(
-                    "parent_file_reference_number {}, {} bytes, {:?}",
-                    u64::from_le_bytes(parent_file_reference_number),
-                    parent_file_reference_number.len(),
-                    parent_file_reference_number
-                );
-                let mut usn = [0u8; 8];
-                usn.clone_from_slice(&output_buffer[buffer_cursor + 24..buffer_cursor + 32]);
-                println!(
-                    "usn {}, {} bytes, {:?}",
-                    i64::from_le_bytes(usn),
-                    usn.len(),
-                    usn
-                );
-                // need to figure out how to convert this into a readable time
-                // might help: https://docs.microsoft.com/en-us/windows/win32/api/minwinbase/ns-minwinbase-filetime
-                let mut timestamp = [0u8; 8];
-                timestamp.clone_from_slice(&output_buffer[buffer_cursor + 32..buffer_cursor + 40]);
-                println!(
-                    "timestamp {}, {} bytes, {:?}",
-                    i64::from_le_bytes(timestamp),
-                    timestamp.len(),
-                    timestamp
-                );
-
-                let mut reason = [0u8; 4];
-                reason.clone_from_slice(&output_buffer[buffer_cursor + 40..buffer_cursor + 44]);
-                println!(
-                    "reason {:#x}, {} bytes, {:?}",
-                    u32::from_le_bytes(reason),
-                    reason.len(),
-                    reason
-                );
-                // source_info 4 bytes, [44..48]
-                // security_id 4 bytes, [48..52]
-                // file_attributes 4 bytes, [52..56]
-                let mut file_attributes = [0u8; 4];
-                file_attributes
-                    .clone_from_slice(&output_buffer[buffer_cursor + 52..buffer_cursor + 56]);
-                println!(
-                    "file_attributes {}, {} bytes, {:?}",
-                    u32::from_le_bytes(file_attributes),
-                    file_attributes.len(),
-                    file_attributes
-                );
-                // file_name_length 2 bytes [56..58]
-                let mut file_name_length = [0u8; 2];
-                file_name_length
-                    .clone_from_slice(&output_buffer[buffer_cursor + 56..buffer_cursor + 58]);
-                let file_name_length_u16 = u16::from_le_bytes(file_name_length);
-                println!(
-                    "file_name_length {}, {} bytes, {:?}",
-                    u16::from_le_bytes(file_name_length),
-                    file_name_length.len(),
-                    file_name_length
-                );
-                // file_name_offset 2 bytes [58..60]
-                let mut file_name_offset = [0u8; 2];
-                file_name_offset
-                    .clone_from_slice(&output_buffer[buffer_cursor + 58..buffer_cursor + 60]);
-                let file_name_offset_u16 = u16::from_le_bytes(file_name_offset);
-                println!(
-                    "file_name_offset {}, {} bytes, {:?}",
-                    u16::from_le_bytes(file_name_offset),
-                    file_name_offset.len(),
-                    file_name_offset
-                );
-                if u16::from_le_bytes(file_name_length) > 0 {
-                    println!("************************");
-                    let mut file_name: Vec<u8> = Vec::new();
-                    let file_name_start = (60 + file_name_offset_u16) as usize;
-                    let file_name_end = file_name_start + file_name_length_u16 as usize;
-                    if file_name_end < output_buffer.len() {
-                        println!(
-                            "{}",
-                            String::from_utf8_lossy(&output_buffer[file_name_start..file_name_end])
-                        );
-                    } else {
-                        println!(
-                            "no file_name or file_name_end longer than output_buffer.len() {}",
-                            output_buffer.len()
-                        );
+                match GetLastError() {
+                    38 => {
+                        // Error 38 is EOF
+                        println!("Reached EOF $MFT");
+                        std::process::exit(0);
                     }
-                    println!("************************");
+                    _ => {
+                        println!("DeviceIoControl failed. Error {}", GetLastError());
+                        std::process::exit(GetLastError() as i32);
+                    }
                 }
-
-                // move the cursor to the start of the next record
-                println!(
-                    "u32::from_le_bytes(record_length) as usize = {}",
-                    u32::from_le_bytes(record_length) as usize
-                );
-                buffer_cursor = buffer_cursor
-                    + 60
-                    + (u16::from_le_bytes(file_name_offset) as usize)
-                    + (u16::from_le_bytes(file_name_length) as usize);
-                println!("buffer_cursor = {}", buffer_cursor);
-                //std::process::exit(42);
             }
-            /* ========================================================
-                        // for i in 0..body.len() {
-                        //     println!(
-                        //         "\n---\nbody[{}] size_of_val = {}",
-                        //         i,
-                        //         std::mem::size_of_val(&body[i])
-                        //     );
-                        //     println!(
-                        //         "gee whiz body[{}].RecordLength = {}, size_of_val = {}",
-                        //         i,
-                        //         &body[i].RecordLength,
-                        //         std::mem::size_of_val(&body[i].RecordLength)
-                        //     );
-                        //     println!(
-                        //         "gee whiz body[{}].MajorVersion = {}, size_of_val = {}",
-                        //         i,
-                        //         body[i].MajorVersion,
-                        //         std::mem::size_of_val(&body[i].MajorVersion)
-                        //     );
-                        //     println!(
-                        //         "gee whiz body[{}].MinorVersion = {}, size_of_val = {}",
-                        //         i,
-                        //         body[i].MinorVersion,
-                        //         std::mem::size_of_val(&body[i].MinorVersion)
-                        //     );
-                        //     println!(
-                        //         "gee whiz body[{}].Usn = {}, size_of_val = {}",
-                        //         i,
-                        //         body[i].Usn,
-                        //         std::mem::size_of_val(&body[i].Usn)
-                        //     );
-                        //     println!(
-                        //         "gee whiz body[{}].Reason = {}, size_of_val = {}",
-                        //         i,
-                        //         body[i].Reason,
-                        //         std::mem::size_of_val(&body[i].Reason)
-                        //     );
-                        //     println!(
-                        //         "gee whiz body[{}].FileNameOffset = {}, size_of_val = {}",
-                        //         i,
-                        //         body[i].FileNameOffset,
-                        //         std::mem::size_of_val(&body[i].FileNameOffset)
-                        //     );
-                        //     println!(
-                        //         "gee whiz body[{}].FileNameLength = {}, size_of_val = {}",
-                        //         i,
-                        //         body[i].FileNameLength,
-                        //         std::mem::size_of_val(&body[i].FileNameLength)
-                        //     );
-                        //     if body[i].FileNameLength > 0 && body[i].FileNameOffset > 0 {
-                        //         //let x = String::from_utf8(body[i].FileName.clone()).unwrap();
-                        //         // let x = String::from_utf16_lossy(
-                        //         //     &body[i].FileName[0..body[i].FileNameLength as usize],
-                        //         // );
-                        //         // println!(
-                        //         //     "gee whiz body[{}].FileName = {}, size_of_value = {}",
-                        //         //     i,
-                        //         //     x,
-                        //         //     std::mem::size_of_val(&x)
-                        //         // );
-                        //     }
-                        // }
-                        // println!(
-                        //     "mem::size_of::<MFT_ENUM_DATA_V0>() as u32 = {:#?}",
-                        //     mem::size_of::<MFT_ENUM_DATA_V0>() as u32
-                        // );
-                        // println!("output_buffer {:?}", output_buffer);
+        }
 
-                        // println!("WORD length = {}", std::mem::size_of::<WORD>());
-                        // println!("WCHAR length = {}", std::mem::size_of::<WCHAR>());
-                        // println!("DWORD length = {}", std::mem::size_of::<DWORD>());
-                        // println!("DWORDLONG length = {}", std::mem::size_of::<DWORDLONG>());
-                        // println!(
-                        //     "LARGE_INTEGER length = {}",
-                        //     std::mem::size_of::<LARGE_INTEGER>()
-                        // );
+        println!("bytes_read {}", bytes_read);
+        println!(
+            "current StartFileReferenceNumber = {}",
+            input_buffer.StartFileReferenceNumber
+        );
+        input_buffer.StartFileReferenceNumber = unsafe { *(output_buffer.as_ptr() as *const u64) };
+        println!(
+            "next StartFileReferenceNumber = {}",
+            input_buffer.StartFileReferenceNumber
+        );
 
-                        //println!("=============");
-                        //let mut record_length = [0u8; 4];
-                        //record_length.clone_from_slice(&output_buffer[0..4]);
-                        //println!(
-                        //    "record_length = {}, {} bytes, {:?}",
-                        //    u32::from_be_bytes(record_length),
-                        //    record_length.len(),
-                        //    record_length
-                        //);
+        // todo: understand why it's <= instead of <
+        while buffer_cursor < bytes_read as usize {
+            println!("\n\n===================");
+            println!("bytes_read {}", bytes_read);
+            println!("loop #: {}", looped);
+            println!("buffer_cursor = {}", buffer_cursor);
 
-                        //let mut major_version = [0u8; 2];
-                        //major_version.clone_from_slice(&output_buffer[5..7]);
-                        //println!(
-                        //    "major_version {}, {} bytes",
-                        //    u16::from_be_bytes(major_version),
-                        //    major_version.len()
-                        //);
+            // record_length 4 bytes, [0..4]
+            println!("DWORD length = {}", std::mem::size_of::<DWORD>());
+            let mut record_length = [0u8; 4];
+            record_length.clone_from_slice(&output_buffer[buffer_cursor + 0..buffer_cursor + 4]);
+            println!(
+                "record_length = {}, {} bytes, {:?}",
+                u32::from_le_bytes(record_length),
+                record_length.len(),
+                record_length
+            );
 
-                        //let mut minor_version = [0u8; 2];
-                        //minor_version.clone_from_slice(&output_buffer[8..10]);
-                        //println!(
-                        //    "minor_version {}, {} bytes",
-                        //    u16::from_be_bytes(minor_version),
-                        //    minor_version.len()
-                        //);
+            // 2 bytes
+            let mut major_version = [0u8; 2];
+            major_version.clone_from_slice(&output_buffer[buffer_cursor + 4..buffer_cursor + 6]);
+            println!(
+                "major_version {}, {} bytes, {:?}",
+                u16::from_le_bytes(major_version),
+                major_version.len(),
+                major_version
+            );
+            let mut minor_version = [0u8; 2];
+            minor_version.clone_from_slice(&output_buffer[buffer_cursor + 6..buffer_cursor + 8]);
+            println!(
+                "minor_version {}, {} bytes, {:?}",
+                u16::from_le_bytes(minor_version),
+                minor_version.len(),
+                minor_version
+            );
+            let mut file_reference_number = [0u8; 8];
+            file_reference_number
+                .clone_from_slice(&output_buffer[buffer_cursor + 8..buffer_cursor + 16]);
+            println!(
+                "file_reference_number {}, {} bytes, {:?}",
+                u64::from_le_bytes(file_reference_number),
+                file_reference_number.len(),
+                file_reference_number
+            );
+            let mut parent_file_reference_number = [0u8; 8];
+            parent_file_reference_number
+                .clone_from_slice(&output_buffer[buffer_cursor + 16..buffer_cursor + 24]);
+            println!(
+                "parent_file_reference_number {}, {} bytes, {:?}",
+                u64::from_le_bytes(parent_file_reference_number),
+                parent_file_reference_number.len(),
+                parent_file_reference_number
+            );
+            let mut usn = [0u8; 8];
+            usn.clone_from_slice(&output_buffer[buffer_cursor + 24..buffer_cursor + 32]);
+            println!(
+                "usn {}, {} bytes, {:?}",
+                i64::from_le_bytes(usn),
+                usn.len(),
+                usn
+            );
+            // need to figure out how to convert this into a readable time
+            // might help: https://docs.microsoft.com/en-us/windows/win32/api/minwinbase/ns-minwinbase-filetime
+            let mut timestamp = [0u8; 8];
+            timestamp.clone_from_slice(&output_buffer[buffer_cursor + 32..buffer_cursor + 40]);
+            println!(
+                "timestamp {}, {} bytes, {:?}",
+                i64::from_le_bytes(timestamp),
+                timestamp.len(),
+                timestamp
+            );
 
-                        //let mut filename_length = [0u8; 2];
-                        //filename_length.clone_from_slice(&output_buffer[67..69]);
-                        //println!(
-                        //    "filename_length {}, {} bytes",
-                        //    u16::from_be_bytes(filename_length),
-                        //    filename_length.len()
-                        //);
+            let mut reason = [0u8; 4];
+            reason.clone_from_slice(&output_buffer[buffer_cursor + 40..buffer_cursor + 44]);
+            println!(
+                "reason {:#x}, {} bytes, {:?}",
+                u32::from_le_bytes(reason),
+                reason.len(),
+                reason
+            );
 
-                        //let mut filename = [0u8; 36];
-                        //filename.clone_from_slice(&output_buffer[73..109]);
-                        //let x = String::from_utf8(filename.to_vec()).unwrap();
-                        //println!("filename {}\n{}", x, filename.len());
-            */
-            // typedef struct {
-            //     DWORD         RecordLength;                  4 bytes [0..4]
-            //     WORD          MajorVersion;                  2 bytes [5..7]
-            //     WORD          MinorVersion;                  2 bytes [8..10]
-            //     DWORDLONG     FileReferenceNumber;           8 bytes [11..19]
-            //     DWORDLONG     ParentFileReferenceNumber;     8 bytes [20..28]
-            //     USN           Usn;                           8 bytes [29..37]
-            //     LARGE_INTEGER TimeStamp;                     8 bytes [38..46]
-            //     DWORD         Reason;                        4 bytes [47..51]
-            //     DWORD         SourceInfo;                    4 bytes [52..56]
-            //     DWORD         SecurityId;                    4 bytes [57..61]
-            //     DWORD         FileAttributes;                4 bytes [62..66]
-            //     WORD          FileNameLength;                2 bytes [67..69]
-            //     WORD          FileNameOffset;                2 bytes [70..72]
-            //     WCHAR         FileName[1];                   ? bytes [73..73+FileNameLength]
-            // } USN_RECORD_V2, *PUSN_RECORD_V2;
+            // source_info 4 bytes, [44..48]
+            let mut source_info = [0u8; 4];
+            source_info.clone_from_slice(&output_buffer[buffer_cursor + 44..buffer_cursor + 48]);
+            println!(
+                "source_info {:#x}, {} bytes, {:?}",
+                u32::from_le_bytes(source_info),
+                source_info.len(),
+                source_info
+            );
+
+            // security_id 4 bytes, [48..52]
+            let mut security_id = [0u8; 4];
+            security_id.clone_from_slice(&output_buffer[buffer_cursor + 48..buffer_cursor + 52]);
+            println!(
+                "security_id {:#x}, {} bytes, {:?}",
+                u32::from_le_bytes(security_id),
+                security_id.len(),
+                security_id
+            );
+
+            // file_attributes 4 bytes, [52..56]
+            let mut file_attributes = [0u8; 4];
+            file_attributes
+                .clone_from_slice(&output_buffer[buffer_cursor + 52..buffer_cursor + 56]);
+            println!(
+                "file_attributes {}, {} bytes, {:?}",
+                u32::from_le_bytes(file_attributes),
+                file_attributes.len(),
+                file_attributes
+            );
+            // file_name_length 2 bytes [56..58]
+            let mut file_name_length = [0u8; 2];
+            file_name_length
+                .clone_from_slice(&output_buffer[buffer_cursor + 56..buffer_cursor + 58]);
+            let file_name_length_u16 = u16::from_le_bytes(file_name_length);
+            println!(
+                "file_name_length {}, {} bytes, {:?}",
+                u16::from_le_bytes(file_name_length),
+                file_name_length.len(),
+                file_name_length
+            );
+            let file_name_length = u16::from_le_bytes(file_name_length);
+
+            // file_name_offset 2 bytes [58..60]
+            let mut file_name_offset = [0u8; 2];
+            file_name_offset
+                .clone_from_slice(&output_buffer[buffer_cursor + 58..buffer_cursor + 60]);
+            let file_name_offset_u16 = u16::from_le_bytes(file_name_offset);
+            println!(
+                "file_name_offset {}, {} bytes, {:?}",
+                u16::from_le_bytes(file_name_offset),
+                file_name_offset.len(),
+                file_name_offset
+            );
+            let file_name_offset = u16::from_le_bytes(file_name_offset);
+
+            if file_name_length > 0 {
+                println!("************************");
+
+                let file_name = unsafe {
+                    output_buffer
+                        .as_ptr()
+                        .offset(buffer_cursor as isize + file_name_offset as isize)
+                        as *const u16
+                };
+                let file_name = unsafe {
+                    // todo: why is file_name_length / 2 here?
+                    std::slice::from_raw_parts(file_name, (file_name_length / 2) as usize)
+                };
+                let file_name = String::from_utf16_lossy(file_name);
+                println!("file_name = {}", file_name);
+
+                println!("************************");
+            }
+
+            // move the cursor to the start of the next record
+            buffer_cursor = buffer_cursor + (u32::from_le_bytes(record_length) as usize);
         }
     }
 }
