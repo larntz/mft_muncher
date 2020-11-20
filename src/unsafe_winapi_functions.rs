@@ -17,12 +17,13 @@ use winapi::um::handleapi::INVALID_HANDLE_VALUE;
 use winapi::um::ioapiset::DeviceIoControl;
 use winapi::um::processthreadsapi::{GetCurrentProcess, OpenProcessToken};
 use winapi::um::securitybaseapi::AdjustTokenPrivileges;
-use winapi::um::winbase::LookupPrivilegeValueW;
+use winapi::um::winbase::{LookupPrivilegeValueW, OpenFileById};
 use winapi::um::winioctl::FSCTL_ENUM_USN_DATA;
 use winapi::um::winnt::{DWORDLONG, HANDLE, LARGE_INTEGER, TOKEN_PRIVILEGES, USN, WCHAR};
 use winapi::um::winnt::{
-    FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_READONLY, FILE_SHARE_DELETE,
-    FILE_SHARE_READ, FILE_SHARE_WRITE, GENERIC_READ, SE_PRIVILEGE_ENABLED, TOKEN_ADJUST_PRIVILEGES,
+    FILE_ATTRIBUTE_ARCHIVE, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL,
+    FILE_ATTRIBUTE_READONLY, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, GENERIC_READ,
+    SE_PRIVILEGE_ENABLED, TOKEN_ADJUST_PRIVILEGES,
 };
 
 /// Needed by DeviceIoControl() when reading the MFT
@@ -74,6 +75,33 @@ fn to_wstring(value: &str) -> Vec<u16> {
         .chain(std::iter::once(0))
         .collect()
 }
+
+/* TODO
+ 1. OpenFileById to get a handle on that file!
+
+ 2. NtQueryInformationFile to get FILE_BASIC_INFORMATION
+      i. this gives us
+              typedef struct _FILE_BASIC_INFORMATION {
+                  LARGE_INTEGER CreationTime;
+                  LARGE_INTEGER LastAccessTime;
+                  LARGE_INTEGER LastWriteTime;
+                  LARGE_INTEGER ChangeTime;
+                  ULONG         FileAttributes;
+              } FILE_BASIC_INFORMATION, *PFILE_BASIC_INFORMATION;
+          https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/ns-wdm-_file_basic_information
+
+ 3. NtQueryInformationFile to get FILE_STANDARD_INFORMATION
+      i. this gives us
+              typedef struct _FILE_STANDARD_INFORMATION {
+                  LARGE_INTEGER AllocationSize;
+                  LARGE_INTEGER EndOfFile;
+                  ULONG         NumberOfLinks;
+                  BOOLEAN       DeletePending;
+                  BOOLEAN       Directory;
+              } FILE_STANDARD_INFORMATION, *PFILE_STANDARD_INFORMATION;
+          https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/ns-wdm-_file_standard_information
+*/
+pub fn get_file_info_details() {}
 
 /// walk the master file table (MFT)
 pub fn read_mft(volume_handle: HANDLE) {
@@ -192,7 +220,9 @@ pub fn read_mft(volume_handle: HANDLE) {
 
         if x.file_attributes & FILE_ATTRIBUTE_READONLY > 0 {
             print!("FILE_ATTRIBUTE_READONLY :: ");
-            attrib = true;
+        }
+        if x.file_attributes & FILE_ATTRIBUTE_ARCHIVE > 0 {
+            print!("FILE_ATTRIBUTE_ARCHIVE:: ");
         }
         if x.file_attributes & FILE_ATTRIBUTE_NORMAL > 0 {
             println!("FILE_ATTRIBUTE_NORMAL ");
