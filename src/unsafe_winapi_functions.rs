@@ -11,13 +11,18 @@ use winapi::_core::i64;
 use winapi::shared::minwindef::{DWORD, LPDWORD, LPVOID, MAX_PATH, WORD};
 use winapi::um::errhandlingapi::GetLastError;
 use winapi::um::fileapi::OPEN_EXISTING;
-use winapi::um::fileapi::{CreateFileW, GetVolumeNameForVolumeMountPointW};
+use winapi::um::fileapi::{
+    CreateFileW, GetVolumeNameForVolumeMountPointW, FILE_BASIC_INFO, FILE_STANDARD_INFO,
+};
 use winapi::um::handleapi::CloseHandle;
 use winapi::um::handleapi::INVALID_HANDLE_VALUE;
 use winapi::um::ioapiset::DeviceIoControl;
 use winapi::um::processthreadsapi::{GetCurrentProcess, OpenProcessToken};
 use winapi::um::securitybaseapi::AdjustTokenPrivileges;
-use winapi::um::winbase::{LookupPrivilegeValueW, OpenFileById};
+use winapi::um::winbase::{
+    FILE_ID_DESCRIPTOR_u, LookupPrivilegeValueW, OpenFileById, FILE_FLAG_BACKUP_SEMANTICS,
+    FILE_ID_DESCRIPTOR,
+};
 use winapi::um::winioctl::FSCTL_ENUM_USN_DATA;
 use winapi::um::winnt::{DWORDLONG, HANDLE, LARGE_INTEGER, TOKEN_PRIVILEGES, USN, WCHAR};
 use winapi::um::winnt::{
@@ -36,6 +41,13 @@ struct MFT_ENUM_DATA_V0 {
     StartFileReferenceNumber: DWORDLONG,
     LowUsn: USN,
     HighUsn: USN,
+}
+
+#[repr(C)]
+pub struct FILE_ID_DESCRIPTOR_0 {
+    pub dwSize: DWORD,
+    pub Type: u32,
+    pub FileId: u64,
 }
 
 // https://github.com/netaneld122/ddup/blob/6aa8fe63fba1835e29d3e6e38f40d265a133184b/src/winioctl.rs#L35
@@ -101,7 +113,28 @@ fn to_wstring(value: &str) -> Vec<u16> {
               } FILE_STANDARD_INFORMATION, *PFILE_STANDARD_INFORMATION;
           https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/ns-wdm-_file_standard_information
 */
-pub fn get_file_info_details() {}
+pub fn get_file_info_details(file_reference_number: u64, volume_handle: HANDLE) {
+    let mut x: FILE_ID_DESCRIPTOR_0 = FILE_ID_DESCRIPTOR_0 {
+        dwSize: mem::size_of::<FILE_ID_DESCRIPTOR>() as u32,
+        Type: 0,
+        FileId: file_reference_number,
+    };
+    let file_handle: HANDLE = unsafe {
+        OpenFileById(
+            volume_handle,
+            x.as_mut_ptr(),
+            GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            ptr::null_mut(),
+            FILE_FLAG_BACKUP_SEMANTICS,
+        )
+    };
+    if file_handle != INVALID_HANDLE_VALUE {
+        println!("file handle {:x?}", file_handle);
+    } else {
+        println!("INVALID_HANDLE_VALUE from OpenFileById");
+    }
+}
 
 /// walk the master file table (MFT)
 pub fn read_mft(volume_handle: HANDLE) {
@@ -213,10 +246,14 @@ pub fn read_mft(volume_handle: HANDLE) {
             buffer_cursor = buffer_cursor + (usn_record.RecordLength as isize);
         }
     }
-    println!("found {} records", records.len());
+    println!(
+        "found {} records (capacity {})",
+        records.len(),
+        records.capacity()
+    );
     for x in records.iter() {
         let mut attrib: bool = false;
-        print!("{} :: ", x.file_attributes);
+        print!("{} :: {} :: ", x.file_attributes, x.file_name);
 
         if x.file_attributes & FILE_ATTRIBUTE_READONLY > 0 {
             print!("FILE_ATTRIBUTE_READONLY :: ");
@@ -235,6 +272,7 @@ pub fn read_mft(volume_handle: HANDLE) {
         if attrib == false {
             println!(" ");
         }
+        get_file_info_details(x.file_reference_number, volume_handle);
     }
 }
 
@@ -356,8 +394,8 @@ Example volume GUID: `\\?\Volume{6eb8a49a-0000-0000-0000-300300000000}`
 
 */
 pub fn get_file_read_handle(volume: &str) -> Option<HANDLE> {
-    unsafe {
-        let handle = CreateFileW(
+    let handle = unsafe {
+        CreateFileW(
             to_wstring(volume).as_ptr(),
             GENERIC_READ,
             // opening with FILE_SHARE_READ only gives a ERROR_SHARING_VIOLATION error
@@ -366,13 +404,13 @@ pub fn get_file_read_handle(volume: &str) -> Option<HANDLE> {
             OPEN_EXISTING,
             0,
             ptr::null_mut(),
-        );
+        )
+    };
 
-        if handle == INVALID_HANDLE_VALUE {
-            let x = winapi::um::errhandlingapi::GetLastError();
-            println!("invalid handle value: {:#?}, error == {:#?}", handle, x);
-            println!("See https://docs.microsoft.com/en-us/windows/win32/debug/system-error-codes");
-        }
-        Some(handle)
+    if handle == INVALID_HANDLE_VALUE {
+        let x = unsafe { winapi::um::errhandlingapi::GetLastError() };
+        println!("invalid handle value: {:#?}, error == {:#?}", handle, x);
+        println!("See https://docs.microsoft.com/en-us/windows/win32/debug/system-error-codes");
     }
+    Some(handle)
 }
