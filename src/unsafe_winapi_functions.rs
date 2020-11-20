@@ -21,9 +21,10 @@ use winapi::um::winbase::LookupPrivilegeValueW;
 use winapi::um::winioctl::FSCTL_ENUM_USN_DATA;
 use winapi::um::winnt::{DWORDLONG, HANDLE, LARGE_INTEGER, TOKEN_PRIVILEGES, USN, WCHAR};
 use winapi::um::winnt::{
-    FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, GENERIC_READ, SE_PRIVILEGE_ENABLED,
-    TOKEN_ADJUST_PRIVILEGES,
+    FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_READONLY, FILE_SHARE_DELETE,
+    FILE_SHARE_READ, FILE_SHARE_WRITE, GENERIC_READ, SE_PRIVILEGE_ENABLED, TOKEN_ADJUST_PRIVILEGES,
 };
+
 /// Needed by DeviceIoControl() when reading the MFT
 ///
 /// [MFT_ENUM_DATA_V0](https://docs.microsoft.com/en-us/windows/win32/api/winioctl/ns-winioctl-mft_enum_data_v0)
@@ -56,6 +57,15 @@ pub struct USN_RECORD {
     pub FileNameOffset: WORD,
     pub FileName: [WCHAR; 1],
 }
+
+pub struct FileInfo {
+    pub file_name: String,
+    pub file_reference_number: u64,
+    pub parent_reference_number: u64,
+    pub usn: u64,
+    pub file_attributes: u32,
+}
+
 /// Converts a &str to a wide OsStr (utf16)
 fn to_wstring(value: &str) -> Vec<u16> {
     use std::os::windows::ffi::OsStrExt;
@@ -67,6 +77,7 @@ fn to_wstring(value: &str) -> Vec<u16> {
 
 /// walk the master file table (MFT)
 pub fn read_mft(volume_handle: HANDLE) {
+    let mut records: Vec<FileInfo> = Vec::with_capacity(524_288); // minimal system has ~300_000 files and dirs
     let mut output_buffer = [0u8; 1024 * 128]; // data out from DeviceIoControl()
     let mut input_buffer = MFT_ENUM_DATA_V0 {
         // into DeviceIoControl()
@@ -109,16 +120,16 @@ pub fn read_mft(volume_handle: HANDLE) {
             }
         }
 
-        println!("bytes_read {}", bytes_read);
-        println!(
-            "current StartFileReferenceNumber = {}",
-            input_buffer.StartFileReferenceNumber
-        );
+        //println!("bytes_read {}", bytes_read);
+        //println!(
+        //    "current StartFileReferenceNumber = {}",
+        //    input_buffer.StartFileReferenceNumber
+        //);
         input_buffer.StartFileReferenceNumber = unsafe { *(output_buffer.as_ptr() as *const u64) };
-        println!(
-            "next StartFileReferenceNumber = {}",
-            input_buffer.StartFileReferenceNumber
-        );
+        // println!(
+        //     "next StartFileReferenceNumber = {}",
+        //     input_buffer.StartFileReferenceNumber
+        // );
 
         while buffer_cursor < bytes_read as isize {
             // println!("\n\n===================");
@@ -136,8 +147,8 @@ pub fn read_mft(volume_handle: HANDLE) {
             // );
             // println!("FileReferenceNumber == {}", usn_record.FileReferenceNumber);
             // println!(
-            //     "ParentFileReferenceNumber == {}",
-            //     usn_record.ParentFileReferenceNumber
+            //    "ParentFileReferenceNumber == {}",
+            //    usn_record.ParentFileReferenceNumber
             // );
             // println!("Usn == {}", usn_record.Usn);
             // // can't be formatted
@@ -149,21 +160,50 @@ pub fn read_mft(volume_handle: HANDLE) {
             // println!("FileNameLength == {}", usn_record.FileNameLength);
             // println!("FileNameOffset == {}", usn_record.FileNameOffset);
 
-            // let file_name = unsafe {
-            //     output_buffer
-            //         .as_ptr()
-            //         .offset(buffer_cursor as isize + usn_record.FileNameOffset as isize)
-            //         as *const u16
-            // };
-            // let file_name = unsafe {
-            //     // todo: why is file_name_length / 2 here?
-            //     std::slice::from_raw_parts(file_name, (usn_record.FileNameLength / 2) as usize)
-            // };
-            // let file_name = String::from_utf16_lossy(file_name);
+            let file_name = unsafe {
+                output_buffer
+                    .as_ptr()
+                    .offset(buffer_cursor as isize + usn_record.FileNameOffset as isize)
+                    as *const u16
+            };
+            let file_name = unsafe {
+                // todo: why is file_name_length / 2 here?
+                std::slice::from_raw_parts(file_name, (usn_record.FileNameLength / 2) as usize)
+            };
+            let file_name = String::from_utf16_lossy(file_name);
             // println!("file_name = {}", file_name);
+
+            records.push(FileInfo {
+                file_name,
+                file_reference_number: usn_record.FileReferenceNumber as u64,
+                parent_reference_number: usn_record.ParentFileReferenceNumber as u64,
+                usn: usn_record.Usn as u64,
+                file_attributes: usn_record.FileAttributes as u32,
+            });
 
             // move the cursor to the start of the next record
             buffer_cursor = buffer_cursor + (usn_record.RecordLength as isize);
+        }
+    }
+    println!("found {} records", records.len());
+    for x in records.iter() {
+        let mut attrib: bool = false;
+        print!("{} :: ", x.file_attributes);
+
+        if x.file_attributes & FILE_ATTRIBUTE_READONLY > 0 {
+            print!("FILE_ATTRIBUTE_READONLY :: ");
+            attrib = true;
+        }
+        if x.file_attributes & FILE_ATTRIBUTE_NORMAL > 0 {
+            println!("FILE_ATTRIBUTE_NORMAL ");
+            attrib = true;
+        }
+        if x.file_attributes & FILE_ATTRIBUTE_DIRECTORY > 0 {
+            println!("FILE_ATTRIBUTE_DIRECTORY ");
+            attrib = true;
+        }
+        if attrib == false {
+            println!(" ");
         }
     }
 }
