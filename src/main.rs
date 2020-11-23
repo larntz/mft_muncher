@@ -12,7 +12,8 @@ fn main() {
             guid.truncate(guid.len() - 1);
             let handle = get_file_read_handle(&guid).expect("somethin' ain't right");
             println!("handle looks like {:#?}", handle);
-            read_mft(handle);
+            let records = read_mft(handle);
+            println!("received a Vec with {} records", records.len());
         }
         None => {
             println!("drive {} volume guid not found", drive);

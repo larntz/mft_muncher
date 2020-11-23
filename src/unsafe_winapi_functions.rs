@@ -5,6 +5,7 @@
 
 extern crate winapi;
 
+use chrono::prelude::*;
 use std::mem;
 use std::ptr;
 use winapi::_core::i64;
@@ -12,16 +13,20 @@ use winapi::shared::minwindef::{DWORD, LPDWORD, LPVOID, MAX_PATH, WORD};
 use winapi::um::errhandlingapi::GetLastError;
 use winapi::um::fileapi::OPEN_EXISTING;
 use winapi::um::fileapi::{
-    CreateFileW, GetVolumeNameForVolumeMountPointW, FILE_BASIC_INFO, FILE_STANDARD_INFO,
+    CreateFileW, GetVolumeNameForVolumeMountPointW, BY_HANDLE_FILE_INFORMATION, FILE_BASIC_INFO,
+    FILE_STANDARD_INFO,
 };
+use winapi::um::fileapi::{GetFileInformationByHandle, GetFileSizeEx};
 use winapi::um::handleapi::CloseHandle;
 use winapi::um::handleapi::INVALID_HANDLE_VALUE;
 use winapi::um::ioapiset::DeviceIoControl;
+use winapi::um::minwinbase::SYSTEMTIME;
 use winapi::um::processthreadsapi::{GetCurrentProcess, OpenProcessToken};
 use winapi::um::securitybaseapi::AdjustTokenPrivileges;
+use winapi::um::timezoneapi::FileTimeToSystemTime;
 use winapi::um::winbase::{
     FILE_ID_DESCRIPTOR_u, LookupPrivilegeValueW, OpenFileById, FILE_FLAG_BACKUP_SEMANTICS,
-    FILE_ID_DESCRIPTOR,
+    FILE_ID_DESCRIPTOR, LPFILE_ID_DESCRIPTOR,
 };
 use winapi::um::winioctl::FSCTL_ENUM_USN_DATA;
 use winapi::um::winnt::{DWORDLONG, HANDLE, LARGE_INTEGER, TOKEN_PRIVILEGES, USN, WCHAR};
@@ -71,12 +76,21 @@ pub struct USN_RECORD {
     pub FileName: [WCHAR; 1],
 }
 
+pub enum FileDirectory {
+    File,
+    Directory,
+}
+
 pub struct FileInfo {
     pub file_name: String,
     pub file_reference_number: u64,
     pub parent_reference_number: u64,
     pub usn: u64,
     pub file_attributes: u32,
+    pub file_size_bytes: u64,
+    pub file_created: DateTime<Utc>,
+    pub file_accessed: DateTime<Utc>,
+    pub file_written: DateTime<Utc>,
 }
 
 /// Converts a &str to a wide OsStr (utf16)
@@ -113,31 +127,100 @@ fn to_wstring(value: &str) -> Vec<u16> {
               } FILE_STANDARD_INFORMATION, *PFILE_STANDARD_INFORMATION;
           https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/ns-wdm-_file_standard_information
 */
-pub fn get_file_info_details(file_reference_number: u64, volume_handle: HANDLE) {
-    let mut x: FILE_ID_DESCRIPTOR_0 = FILE_ID_DESCRIPTOR_0 {
-        dwSize: mem::size_of::<FILE_ID_DESCRIPTOR>() as u32,
-        Type: 0,
-        FileId: file_reference_number,
-    };
-    let file_handle: HANDLE = unsafe {
-        OpenFileById(
+pub fn get_file_info_details(
+    file_reference_number: u64,
+    volume_handle: HANDLE,
+    file_info: &mut FileInfo,
+) -> &mut FileInfo {
+    unsafe {
+        let mut u: FILE_ID_DESCRIPTOR_u = std::mem::zeroed::<FILE_ID_DESCRIPTOR_u>();
+        let mut l: LARGE_INTEGER = std::mem::zeroed::<LARGE_INTEGER>();
+        *l.QuadPart_mut() = file_reference_number as i64;
+        *u.FileId_mut() = l;
+
+        let mut fid: FILE_ID_DESCRIPTOR = FILE_ID_DESCRIPTOR {
+            dwSize: mem::size_of::<FILE_ID_DESCRIPTOR>() as u32,
+            Type: 0,
+            u,
+        };
+        let fid_ptr: *mut FILE_ID_DESCRIPTOR = &mut fid;
+        match OpenFileById(
             volume_handle,
-            x.as_mut_ptr(),
+            fid_ptr,
             GENERIC_READ,
-            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            FILE_SHARE_READ, // | FILE_SHARE_WRITE,
             ptr::null_mut(),
             FILE_FLAG_BACKUP_SEMANTICS,
-        )
-    };
-    if file_handle != INVALID_HANDLE_VALUE {
-        println!("file handle {:x?}", file_handle);
-    } else {
-        println!("INVALID_HANDLE_VALUE from OpenFileById");
+        ) {
+            INVALID_HANDLE_VALUE => {
+                //println!("INVALID_HANDLE_VALUE from OpenFileById");
+            }
+            f_handle => {
+                let mut file_info_by_handle: BY_HANDLE_FILE_INFORMATION =
+                    std::mem::zeroed::<BY_HANDLE_FILE_INFORMATION>();
+                let file_info_ptr: *mut BY_HANDLE_FILE_INFORMATION = &mut file_info_by_handle;
+                GetFileInformationByHandle(f_handle, file_info_ptr);
+
+                // look into this more and understand exactly how this is works
+                // see below for a way to verify the math is correct
+                file_info.file_size_bytes = ((file_info_by_handle.nFileSizeHigh as u64)
+                    << (std::mem::size_of::<DWORD>() * 8))
+                    | file_info_by_handle.nFileSizeLow as u64;
+
+                let mut c_system_time: SYSTEMTIME = std::mem::zeroed::<SYSTEMTIME>();
+                let mut system_time_ptr: *mut SYSTEMTIME = &mut c_system_time;
+                FileTimeToSystemTime(&file_info_by_handle.ftCreationTime, system_time_ptr);
+                file_info.file_created = Utc
+                    .ymd(
+                        c_system_time.wYear as i32,
+                        c_system_time.wMonth as u32,
+                        c_system_time.wDay as u32,
+                    )
+                    .and_hms(
+                        c_system_time.wHour as u32,
+                        c_system_time.wMinute as u32,
+                        c_system_time.wSecond as u32,
+                    );
+
+                let mut a_system_time: SYSTEMTIME = std::mem::zeroed::<SYSTEMTIME>();
+                let mut system_time_ptr: *mut SYSTEMTIME = &mut a_system_time;
+                FileTimeToSystemTime(&file_info_by_handle.ftCreationTime, system_time_ptr);
+                file_info.file_accessed = Utc
+                    .ymd(
+                        a_system_time.wYear as i32,
+                        a_system_time.wMonth as u32,
+                        a_system_time.wDay as u32,
+                    )
+                    .and_hms(
+                        a_system_time.wHour as u32,
+                        a_system_time.wMinute as u32,
+                        a_system_time.wSecond as u32,
+                    );
+
+                let mut w_system_time: SYSTEMTIME = std::mem::zeroed::<SYSTEMTIME>();
+                let mut system_time_ptr: *mut SYSTEMTIME = &mut w_system_time;
+                FileTimeToSystemTime(&file_info_by_handle.ftCreationTime, system_time_ptr);
+                file_info.file_written = Utc
+                    .ymd(
+                        w_system_time.wYear as i32,
+                        w_system_time.wMonth as u32,
+                        w_system_time.wDay as u32,
+                    )
+                    .and_hms(
+                        w_system_time.wHour as u32,
+                        w_system_time.wMinute as u32,
+                        w_system_time.wSecond as u32,
+                    );
+
+                CloseHandle(f_handle);
+            }
+        }
     }
+    file_info
 }
 
 /// walk the master file table (MFT)
-pub fn read_mft(volume_handle: HANDLE) {
+pub fn read_mft(volume_handle: HANDLE) -> Vec<FileInfo> {
     let mut records: Vec<FileInfo> = Vec::with_capacity(524_288); // minimal system has ~300_000 files and dirs
     let mut output_buffer = [0u8; 1024 * 128]; // data out from DeviceIoControl()
     let mut input_buffer = MFT_ENUM_DATA_V0 {
@@ -181,45 +264,12 @@ pub fn read_mft(volume_handle: HANDLE) {
             }
         }
 
-        //println!("bytes_read {}", bytes_read);
-        //println!(
-        //    "current StartFileReferenceNumber = {}",
-        //    input_buffer.StartFileReferenceNumber
-        //);
         input_buffer.StartFileReferenceNumber = unsafe { *(output_buffer.as_ptr() as *const u64) };
-        // println!(
-        //     "next StartFileReferenceNumber = {}",
-        //     input_buffer.StartFileReferenceNumber
-        // );
 
         while buffer_cursor < bytes_read as isize {
-            // println!("\n\n===================");
-            // println!("bytes_read {}", bytes_read);
-            // println!("buffer_cursor = {}", buffer_cursor);
-
             let buffer_pointer = output_buffer.as_ptr();
             let buffer_pointer = unsafe { buffer_pointer.offset(buffer_cursor) };
             let usn_record: &USN_RECORD = unsafe { std::mem::transmute(buffer_pointer) };
-
-            // println!("record length == {}", usn_record.RecordLength);
-            // println!(
-            //     "usn record version == {}.{}",
-            //     usn_record.MajorVersion, usn_record.MinorVersion
-            // );
-            // println!("FileReferenceNumber == {}", usn_record.FileReferenceNumber);
-            // println!(
-            //    "ParentFileReferenceNumber == {}",
-            //    usn_record.ParentFileReferenceNumber
-            // );
-            // println!("Usn == {}", usn_record.Usn);
-            // // can't be formatted
-            // //println!("TimeStamp == {:#?}", usn_record.TimeStamp);
-            // println!("Reason == {:x}", usn_record.Reason);
-            // println!("SourceInfo == {:x}", usn_record.SourceInfo);
-            // println!("SecurityID == {:x}", usn_record.SecurityId);
-            // println!("FileAttributes == {}", usn_record.FileAttributes);
-            // println!("FileNameLength == {}", usn_record.FileNameLength);
-            // println!("FileNameOffset == {}", usn_record.FileNameOffset);
 
             let file_name = unsafe {
                 output_buffer
@@ -232,7 +282,6 @@ pub fn read_mft(volume_handle: HANDLE) {
                 std::slice::from_raw_parts(file_name, (usn_record.FileNameLength / 2) as usize)
             };
             let file_name = String::from_utf16_lossy(file_name);
-            // println!("file_name = {}", file_name);
 
             records.push(FileInfo {
                 file_name,
@@ -240,6 +289,10 @@ pub fn read_mft(volume_handle: HANDLE) {
                 parent_reference_number: usn_record.ParentFileReferenceNumber as u64,
                 usn: usn_record.Usn as u64,
                 file_attributes: usn_record.FileAttributes as u32,
+                file_size_bytes: 0,
+                file_created: Utc.ymd(1970, 1, 1).and_hms(0, 0, 0),
+                file_accessed: Utc.ymd(1970, 1, 1).and_hms(0, 0, 0),
+                file_written: Utc.ymd(1970, 1, 1).and_hms(0, 0, 0),
             });
 
             // move the cursor to the start of the next record
@@ -251,29 +304,15 @@ pub fn read_mft(volume_handle: HANDLE) {
         records.len(),
         records.capacity()
     );
-    for x in records.iter() {
-        let mut attrib: bool = false;
-        print!("{} :: {} :: ", x.file_attributes, x.file_name);
+    println!("size_of FileInfo is {}", std::mem::size_of::<FileInfo>());
 
-        if x.file_attributes & FILE_ATTRIBUTE_READONLY > 0 {
-            print!("FILE_ATTRIBUTE_READONLY :: ");
-        }
-        if x.file_attributes & FILE_ATTRIBUTE_ARCHIVE > 0 {
-            print!("FILE_ATTRIBUTE_ARCHIVE:: ");
-        }
-        if x.file_attributes & FILE_ATTRIBUTE_NORMAL > 0 {
-            println!("FILE_ATTRIBUTE_NORMAL ");
-            attrib = true;
-        }
-        if x.file_attributes & FILE_ATTRIBUTE_DIRECTORY > 0 {
-            println!("FILE_ATTRIBUTE_DIRECTORY ");
-            attrib = true;
-        }
-        if attrib == false {
-            println!(" ");
-        }
-        get_file_info_details(x.file_reference_number, volume_handle);
+    for mut x in records
+        .iter_mut()
+        .filter(|x| (x.file_attributes & FILE_ATTRIBUTE_DIRECTORY) == 0)
+    {
+        get_file_info_details(x.file_reference_number, volume_handle, &mut x);
     }
+    records
 }
 
 /**
