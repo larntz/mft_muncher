@@ -1,6 +1,5 @@
-use mft_muncher::unsafe_winapi_functions::{
-    assert_security_privileges, get_file_read_handle, get_volume_guid, read_mft,
-};
+use mft_muncher::unsafe_winapi_functions::{assert_security_privileges, get_volume_guid, read_mft};
+use std::time::Instant;
 
 fn main() {
     // elevate process privileges (we require seBackupPrivilege and SeRestorePrivilege)
@@ -8,12 +7,19 @@ fn main() {
 
     let drive = r"c:\";
     match get_volume_guid(drive) {
-        Some(mut guid) => {
-            guid.truncate(guid.len() - 1);
-            let handle = get_file_read_handle(&guid).expect("somethin' ain't right");
-            println!("handle looks like {:#?}", handle);
-            let records = read_mft(handle);
-            println!("received a Vec with {} records", records.len());
+        Some(volume_root_guid) => {
+            let start_time = Instant::now();
+            let records = read_mft(&volume_root_guid).unwrap();
+            let read_mft_duration = start_time.elapsed();
+            println!(
+                "received a Vec with {} records in {}ms",
+                records.len(),
+                read_mft_duration.as_millis()
+            );
+            let _ = std::process::Command::new("cmd.exe")
+                .arg("/c")
+                .arg("pause")
+                .status();
         }
         None => {
             println!("drive {} volume guid not found", drive);

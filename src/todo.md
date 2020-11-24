@@ -7,3 +7,8 @@
 # Files / Directories that might be safe to archive .zip
 
 1. inetpub / logs / logfiles / * / *.log
+
+
+# scratch
+
+1407374883553285
