@@ -16,6 +16,9 @@ fn main() {
                 records.len(),
                 read_mft_duration.as_millis()
             );
+            // for rec in records.iter() {
+            //     println!("{}", rec.file_name());
+            // }
             let _ = std::process::Command::new("cmd.exe")
                 .arg("/c")
                 .arg("pause")
