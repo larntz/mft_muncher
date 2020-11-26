@@ -7,8 +7,9 @@ extern crate winapi;
 
 use self::winapi::um::minwinbase::FileNameInfo;
 use self::winapi::um::winbase::GetFileInformationByHandleEx;
+use crate::zipper::{Node, NodeZipper};
 use chrono::prelude::*;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::convert::TryInto;
 use std::mem;
 use std::ptr;
@@ -70,14 +71,17 @@ const USN_RECORD_LENGTH: usize = 320; // size of USN_RECORD in bytes
 #[allow(non_snake_case)]
 #[allow(non_camel_case_types)]
 #[repr(C)]
+#[derive(Debug, Copy, Clone)]
 pub struct USN_RECORD {
     RecordLength: DWORD,
     MajorVersion: WORD,
     MinorVersion: WORD,
     pub FileReferenceNumber: DWORDLONG,
     pub ParentFileReferenceNumber: DWORDLONG,
-    Usn: USN,
-    TimeStamp: LARGE_INTEGER,
+    //Usn: USN,
+    Usn: u64,
+    //TimeStamp: LARGE_INTEGER,
+    TimeStamp: u64,
     Reason: DWORD,
     SourceInfo: DWORD,
     SecurityId: DWORD,
@@ -136,50 +140,61 @@ impl FILE_INFORMATION {
     fn creation_time(&self) -> DateTime<Utc> {
         let mut system_time: SYSTEMTIME = unsafe { std::mem::zeroed::<SYSTEMTIME>() };
         let mut system_time_ptr: *mut SYSTEMTIME = &mut system_time;
-        unsafe { FileTimeToSystemTime(&self.ftCreationTime, system_time_ptr) };
-
-        Utc.ymd(
-            system_time.wYear as i32,
-            system_time.wMonth as u32,
-            system_time.wDay as u32,
-        )
-        .and_hms(
-            system_time.wHour as u32,
-            system_time.wMinute as u32,
-            system_time.wSecond as u32,
-        )
+        let result = unsafe { FileTimeToSystemTime(&self.ftCreationTime, system_time_ptr) };
+        if result != 0 {
+            Utc.ymd(
+                system_time.wYear as i32,
+                system_time.wMonth as u32,
+                system_time.wDay as u32,
+            )
+            .and_hms(
+                system_time.wHour as u32,
+                system_time.wMinute as u32,
+                system_time.wSecond as u32,
+            )
+        } else {
+            Utc.ymd(1970, 1, 1).and_hms(0, 0, 0)
+        }
     }
     fn last_access_time(&self) -> DateTime<Utc> {
         let mut system_time: SYSTEMTIME = unsafe { std::mem::zeroed::<SYSTEMTIME>() };
         let mut system_time_ptr: *mut SYSTEMTIME = &mut system_time;
-        unsafe { FileTimeToSystemTime(&self.ftLastAccessTime, system_time_ptr) };
+        let result = unsafe { FileTimeToSystemTime(&self.ftLastAccessTime, system_time_ptr) };
 
-        Utc.ymd(
-            system_time.wYear as i32,
-            system_time.wMonth as u32,
-            system_time.wDay as u32,
-        )
-        .and_hms(
-            system_time.wHour as u32,
-            system_time.wMinute as u32,
-            system_time.wSecond as u32,
-        )
+        if result != 0 {
+            Utc.ymd(
+                system_time.wYear as i32,
+                system_time.wMonth as u32,
+                system_time.wDay as u32,
+            )
+            .and_hms(
+                system_time.wHour as u32,
+                system_time.wMinute as u32,
+                system_time.wSecond as u32,
+            )
+        } else {
+            Utc.ymd(1970, 1, 1).and_hms(0, 0, 0)
+        }
     }
     fn last_write_time(&self) -> DateTime<Utc> {
         let mut system_time: SYSTEMTIME = unsafe { std::mem::zeroed::<SYSTEMTIME>() };
         let mut system_time_ptr: *mut SYSTEMTIME = &mut system_time;
-        unsafe { FileTimeToSystemTime(&self.ftLastWriteTime, system_time_ptr) };
+        let result = unsafe { FileTimeToSystemTime(&self.ftLastWriteTime, system_time_ptr) };
 
-        Utc.ymd(
-            system_time.wYear as i32,
-            system_time.wMonth as u32,
-            system_time.wDay as u32,
-        )
-        .and_hms(
-            system_time.wHour as u32,
-            system_time.wMinute as u32,
-            system_time.wSecond as u32,
-        )
+        if result != 0 {
+            Utc.ymd(
+                system_time.wYear as i32,
+                system_time.wMonth as u32,
+                system_time.wDay as u32,
+            )
+            .and_hms(
+                system_time.wHour as u32,
+                system_time.wMinute as u32,
+                system_time.wSecond as u32,
+            )
+        } else {
+            Utc.ymd(1970, 1, 1).and_hms(0, 0, 0)
+        }
     }
 }
 
@@ -190,18 +205,23 @@ impl FILE_INFORMATION {
 //     children: Vec<u64>,
 // }
 
-// not using
-// #[derive(Debug)]
-// pub struct FileInfo {
-//     pub name: String,
-//     pub reference_number: u64,
-//     pub parent_reference_number: u64,
-//     pub attributes: u32,
-//     pub size_bytes: u64,
-//     pub created: DateTime<Utc>,
-//     pub last_accessed: DateTime<Utc>,
-//     pub last_written: DateTime<Utc>,
-// }
+#[derive(Debug, Clone)]
+pub struct FileInfo {
+    pub name: String,
+    pub reference_number: u64,
+    pub parent_reference_number: u64,
+    pub attributes: u32,
+    pub size_bytes: u64,
+    pub created: DateTime<Utc>,
+    pub last_accessed: DateTime<Utc>,
+    pub last_written: DateTime<Utc>,
+}
+
+impl FileInfo {
+    fn is_file(&self) -> bool {
+        self.attributes & FILE_ATTRIBUTE_DIRECTORY == 0
+    }
+}
 
 /// Converts a &str to a wide OsStr (utf16)
 fn to_wstring(value: &str) -> Vec<u16> {
@@ -239,10 +259,10 @@ pub fn get_file_information(
     file_reference_number: u64,
     volume_handle: HANDLE,
 ) -> Result<FILE_INFORMATION, i32> {
-    match open_file_by_id(file_reference_number, volume_handle) {
+    return match open_file_by_id(file_reference_number, volume_handle) {
         INVALID_HANDLE_VALUE => {
             /* todo: check if bad handles are a problem */
-            return Err(INVALID_HANDLE_VALUE as i32);
+            Err(INVALID_HANDLE_VALUE as i32)
         }
         f_handle => {
             let mut file_info_by_handle: BY_HANDLE_FILE_INFORMATION =
@@ -256,61 +276,15 @@ pub fn get_file_information(
 
             unsafe { CloseHandle(f_handle) };
 
-            /* todo: move this to impl fn for each kind of time
-            let mut c_system_time: SYSTEMTIME = std::mem::zeroed::<SYSTEMTIME>();
-            let mut system_time_ptr: *mut SYSTEMTIME = &mut c_system_time;
-            FileTimeToSystemTime(&file_info_by_handle.ftCreationTime, system_time_ptr);
-            file_info.created = Utc
-                .ymd(
-                    c_system_time.wYear as i32,
-                    c_system_time.wMonth as u32,
-                    c_system_time.wDay as u32,
-                )
-                .and_hms(
-                    c_system_time.wHour as u32,
-                    c_system_time.wMinute as u32,
-                    c_system_time.wSecond as u32,
-                );
-
-            let mut a_system_time: SYSTEMTIME = std::mem::zeroed::<SYSTEMTIME>();
-            let mut system_time_ptr: *mut SYSTEMTIME = &mut a_system_time;
-            FileTimeToSystemTime(&file_info_by_handle.ftCreationTime, system_time_ptr);
-            file_info.last_accessed = Utc
-                .ymd(
-                    a_system_time.wYear as i32,
-                    a_system_time.wMonth as u32,
-                    a_system_time.wDay as u32,
-                )
-                .and_hms(
-                    a_system_time.wHour as u32,
-                    a_system_time.wMinute as u32,
-                    a_system_time.wSecond as u32,
-                );
-
-            let mut w_system_time: SYSTEMTIME = std::mem::zeroed::<SYSTEMTIME>();
-            let mut system_time_ptr: *mut SYSTEMTIME = &mut w_system_time;
-            FileTimeToSystemTime(&file_info_by_handle.ftCreationTime, system_time_ptr);
-            file_info.last_written = Utc
-                .ymd(
-                    w_system_time.wYear as i32,
-                    w_system_time.wMonth as u32,
-                    w_system_time.wDay as u32,
-                )
-                .and_hms(
-                    w_system_time.wHour as u32,
-                    w_system_time.wMinute as u32,
-                    w_system_time.wSecond as u32,
-                );
-            */
-            return Ok(file_information);
+            Ok(file_information)
         }
-    }
+    };
 }
 
-fn enumerate_usn_data(volume_guid: String) -> Result<Vec<USN_RECORD>, i32> {
+fn enumerate_usn_data(volume_guid: String) -> Result<BTreeMap<u64, Vec<FileInfo>>, i32> {
     let volume_handle = get_file_read_handle(&volume_guid).expect("somethin' ain't right");
-    let mut file_info_records: Vec<FILE_INFORMATION> = Vec::with_capacity(524_288);
-    let mut records: Vec<USN_RECORD> = Vec::with_capacity(524_288);
+    // let mut file_info_records: HashMap<u64, Vec<FILE_INFORMATION>> = HashMap::new(); // Vec::with_capacity(524_288);
+    let mut records: BTreeMap<u64, Vec<FileInfo>> = BTreeMap::new(); // Vec::with_capacity(524_288);
     let mut output_buffer = [0u8; 1024 * 128]; // data out from DeviceIoControl()
     let mut input_buffer = MFT_ENUM_DATA_V0 {
         // into DeviceIoControl()
@@ -353,6 +327,7 @@ fn enumerate_usn_data(volume_guid: String) -> Result<Vec<USN_RECORD>, i32> {
         while buffer_cursor < bytes_read as isize {
             let buffer_pointer = unsafe { output_buffer.as_ptr().offset(buffer_cursor) };
             let usn_record: USN_RECORD = unsafe {
+                // std::mem::transmute(buffer_pointer)
                 std::mem::transmute::<[u8; USN_RECORD_LENGTH], USN_RECORD>(
                     std::slice::from_raw_parts(buffer_pointer, USN_RECORD_LENGTH)
                         .try_into()
@@ -363,24 +338,41 @@ fn enumerate_usn_data(volume_guid: String) -> Result<Vec<USN_RECORD>, i32> {
             // move the cursor to the start of the next record
             buffer_cursor = buffer_cursor + (usn_record.RecordLength as isize);
 
-            if usn_record.is_file() {
-                match get_file_information(usn_record.FileReferenceNumber, volume_handle) {
-                    Ok(file_info) => {
-                        if usn_record.ParentFileReferenceNumber == 0 {
-                            dbg!(
-                                usn_record.file_name(),
-                                file_info.creation_time(),
-                                file_info.last_access_time(),
-                                file_info.last_write_time()
-                            );
-                        }
-                        file_info_records.push(file_info);
+            // get FILE_INFORMATION
+            match get_file_information(usn_record.FileReferenceNumber, volume_handle) {
+                Ok(file_info) => {
+                    // todo fill in info and add FileInfo to btree
+                    if let Some(value) = records.get_mut(&usn_record.ParentFileReferenceNumber) {
+                        value.push(FileInfo {
+                            name: usn_record.file_name(),
+                            reference_number: usn_record.FileReferenceNumber,
+                            parent_reference_number: usn_record.ParentFileReferenceNumber,
+                            attributes: usn_record.FileAttributes,
+                            size_bytes: file_info.file_size(),
+                            created: file_info.creation_time(),
+                            last_accessed: file_info.last_access_time(),
+                            last_written: file_info.creation_time(),
+                        });
+                    } else {
+                        records.insert(
+                            usn_record.ParentFileReferenceNumber,
+                            vec![FileInfo {
+                                name: usn_record.file_name(),
+                                reference_number: usn_record.FileReferenceNumber,
+                                parent_reference_number: usn_record.ParentFileReferenceNumber,
+                                attributes: usn_record.FileAttributes,
+                                size_bytes: file_info.file_size(),
+                                created: file_info.creation_time(),
+                                last_accessed: file_info.last_access_time(),
+                                last_written: file_info.creation_time(),
+                            }],
+                        );
                     }
-                    Err(_) => {}
+                }
+                Err(_) => {
+                    // todo check for INVALID_FILE_HANDLE or a different error
                 }
             }
-
-            records.push(usn_record);
         }
     }
     unsafe { CloseHandle(volume_handle) };
@@ -425,29 +417,47 @@ fn read_file_usn_data(file: &str) -> Result<USN_RECORD, i32> {
 }
 
 /// walk the master file table (MFT)
-pub fn read_mft(volume_root_guid: &str) -> Result<Vec<USN_RECORD>, i32> {
+pub fn read_mft(volume_root_guid: &str) -> Result<BTreeMap<u64, Vec<FileInfo>>, i32> {
     let mut volume_guid = volume_root_guid.clone().to_string();
     volume_guid.truncate(volume_guid.len() - 1);
-    match enumerate_usn_data(volume_guid) {
+    match enumerate_usn_data(volume_guid.clone()) {
         Ok(mut records) => {
             // get the usn_record for the volume root directory so we know the top of our tree
             // ParentFileReferenceNumber will be 0
             match read_file_usn_data(volume_root_guid) {
-                Ok(root_file_info) => {
-                    records.push(root_file_info);
+                Ok(root_file_usn) => {
+                    let root_file_info = get_file_information(
+                        root_file_usn.FileReferenceNumber,
+                        get_file_read_handle(&volume_guid).unwrap(),
+                    )
+                    .unwrap();
+                    dbg!(root_file_usn);
+                    records.insert(
+                        root_file_usn.ParentFileReferenceNumber,
+                        vec![FileInfo {
+                            name: root_file_usn.file_name(),
+                            reference_number: root_file_usn.FileReferenceNumber,
+                            parent_reference_number: root_file_usn.ParentFileReferenceNumber,
+                            attributes: root_file_usn.FileAttributes,
+                            size_bytes: root_file_info.file_size(),
+                            created: root_file_info.creation_time(),
+                            last_accessed: root_file_info.last_access_time(),
+                            last_written: root_file_info.creation_time(),
+                        }],
+                    );
                 }
                 Err(e) => {
                     println!("error from read_file_usn_data {}", e);
                 }
             }
 
-            dbg!(
-                records.len(),
-                records.capacity(),
-                std::mem::size_of::<USN_RECORD>(),
-                (records.len() * std::mem::size_of::<USN_RECORD>()),
-                (records.capacity() * std::mem::size_of::<USN_RECORD>())
-            );
+            // dbg!(
+            //     records.len(),
+            //     records.capacity(),
+            //     std::mem::size_of::<USN_RECORD>(),
+            //     (records.len() * std::mem::size_of::<USN_RECORD>()),
+            //     (records.capacity() * std::mem::size_of::<USN_RECORD>())
+            // );
 
             Ok(records)
         }
@@ -455,25 +465,24 @@ pub fn read_mft(volume_root_guid: &str) -> Result<Vec<USN_RECORD>, i32> {
     }
 }
 
-/* probably will throw away
-fn get_directory_size(frn: u64, records: &Vec<FileInfo>) -> u64 {
-    let size: u64 = records
+fn populate_children(
+    parent_file_reference_number: u64,
+    records: &Vec<USN_RECORD>,
+) -> Vec<Node<USN_RECORD>> {
+    records
         .iter()
-        .filter(|x| {
-            x.parent_reference_number == frn && x.attributes & FILE_ATTRIBUTE_DIRECTORY == 0
+        .filter(|x| x.ParentFileReferenceNumber == parent_file_reference_number)
+        .map(|x| Node {
+            data: *x,
+            children: populate_children(x.FileReferenceNumber, records),
         })
-        .map(|x| x.size_bytes)
-        .sum();
-    // for child_item in records.iter().filter(|x| x.parent_reference_number == frn) {
-    //     if child_item.attributes & FILE_ATTRIBUTE_DIRECTORY != 0 {
-    //         size += get_directory_size(child_item.reference_number, records);
-    //     } else {
-    //         size += child_item.size_bytes;
-    //     }
-    // }
-    size
+        .collect()
+
+    // can't do this without mut records, but I need to borrow it above.... hmmmm
+    // records.retain(|x| {
+    //     x.ParentFileReferenceNumber != root_file_info.FileReferenceNumber
+    // });
 }
-*/
 
 /**
 

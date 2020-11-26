@@ -16,9 +16,10 @@ fn main() {
                 records.len(),
                 read_mft_duration.as_millis()
             );
-            // for rec in records.iter() {
-            //     println!("{}", rec.file_name());
-            // }
+            for rec in records.iter().filter(|x| *x.0 == 1407374883553285) {
+                println!("{} has {} children", rec.0, rec.1.len());
+                println!("{:#?}", rec.1);
+            }
             let _ = std::process::Command::new("cmd.exe")
                 .arg("/c")
                 .arg("pause")
