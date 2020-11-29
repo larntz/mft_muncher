@@ -5,25 +5,20 @@
 
 extern crate winapi;
 
-use self::winapi::um::minwinbase::FileNameInfo;
-use self::winapi::um::winbase::GetFileInformationByHandleEx;
-use crate::zipper::{Node, NodeZipper};
 use chrono::prelude::*;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::convert::TryInto;
 use std::mem;
 use std::ptr;
-use std::time::Instant;
 use winapi::_core::i64;
 use winapi::shared::minwindef::{DWORD, FILETIME, LPDWORD, LPVOID, MAX_PATH, WORD};
 use winapi::shared::winerror::ERROR_HANDLE_EOF;
 use winapi::um::errhandlingapi::GetLastError;
+use winapi::um::fileapi::GetFileInformationByHandle;
 use winapi::um::fileapi::OPEN_EXISTING;
 use winapi::um::fileapi::{
-    CreateFileW, GetVolumeNameForVolumeMountPointW, BY_HANDLE_FILE_INFORMATION, FILE_BASIC_INFO,
-    FILE_NAME_INFO, FILE_STANDARD_INFO, LPBY_HANDLE_FILE_INFORMATION,
+    CreateFileW, GetVolumeNameForVolumeMountPointW, BY_HANDLE_FILE_INFORMATION,
 };
-use winapi::um::fileapi::{GetFileInformationByHandle, GetFileSizeEx};
 use winapi::um::handleapi::CloseHandle;
 use winapi::um::handleapi::INVALID_HANDLE_VALUE;
 use winapi::um::ioapiset::DeviceIoControl;
@@ -33,14 +28,21 @@ use winapi::um::securitybaseapi::AdjustTokenPrivileges;
 use winapi::um::timezoneapi::FileTimeToSystemTime;
 use winapi::um::winbase::{
     FILE_ID_DESCRIPTOR_u, LookupPrivilegeValueW, OpenFileById, FILE_FLAG_BACKUP_SEMANTICS,
-    FILE_ID_DESCRIPTOR, LPFILE_ID_DESCRIPTOR,
+    FILE_ID_DESCRIPTOR,
 };
 use winapi::um::winioctl::{FSCTL_ENUM_USN_DATA, FSCTL_READ_FILE_USN_DATA};
-use winapi::um::winnt::{DWORDLONG, HANDLE, LARGE_INTEGER, TOKEN_PRIVILEGES, USN, WCHAR};
+use winapi::um::winnt::{DWORDLONG, HANDLE, LARGE_INTEGER, TOKEN_PRIVILEGES, USN};
 use winapi::um::winnt::{
-    FILE_ATTRIBUTE_ARCHIVE, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL,
-    FILE_ATTRIBUTE_READONLY, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, GENERIC_READ,
-    SE_PRIVILEGE_ENABLED, TOKEN_ADJUST_PRIVILEGES,
+    //FILE_ATTRIBUTE_ARCHIVE,
+    FILE_ATTRIBUTE_DIRECTORY,
+    //FILE_ATTRIBUTE_NORMAL,
+    //FILE_ATTRIBUTE_READONLY,
+    FILE_SHARE_DELETE,
+    FILE_SHARE_READ,
+    FILE_SHARE_WRITE,
+    GENERIC_READ,
+    SE_PRIVILEGE_ENABLED,
+    TOKEN_ADJUST_PRIVILEGES,
 };
 
 /// Needed by DeviceIoControl() when reading the MFT
@@ -93,7 +95,7 @@ pub struct USN_RECORD {
 
 impl USN_RECORD {
     pub fn file_name(&self) -> String {
-        let filename = unsafe { self.FileName.as_ptr() };
+        let filename = self.FileName.as_ptr();
         let filename = unsafe {
             // file_name_length / 2 bc we are using u16 instead of u8 for file name
             std::slice::from_raw_parts(filename, (self.FileNameLength / 2) as usize)
@@ -137,9 +139,16 @@ impl FILE_INFORMATION {
             | self.nFileSizeLow as u64
     }
 
+    pub fn is_file(&self) -> bool {
+        match self.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY {
+            0 => true,
+            _ => false,
+        }
+    }
+
     fn creation_time(&self) -> DateTime<Utc> {
         let mut system_time: SYSTEMTIME = unsafe { std::mem::zeroed::<SYSTEMTIME>() };
-        let mut system_time_ptr: *mut SYSTEMTIME = &mut system_time;
+        let system_time_ptr: *mut SYSTEMTIME = &mut system_time;
         let result = unsafe { FileTimeToSystemTime(&self.ftCreationTime, system_time_ptr) };
         if result != 0 {
             Utc.ymd(
@@ -158,7 +167,7 @@ impl FILE_INFORMATION {
     }
     fn last_access_time(&self) -> DateTime<Utc> {
         let mut system_time: SYSTEMTIME = unsafe { std::mem::zeroed::<SYSTEMTIME>() };
-        let mut system_time_ptr: *mut SYSTEMTIME = &mut system_time;
+        let system_time_ptr: *mut SYSTEMTIME = &mut system_time;
         let result = unsafe { FileTimeToSystemTime(&self.ftLastAccessTime, system_time_ptr) };
 
         if result != 0 {
@@ -178,7 +187,7 @@ impl FILE_INFORMATION {
     }
     fn last_write_time(&self) -> DateTime<Utc> {
         let mut system_time: SYSTEMTIME = unsafe { std::mem::zeroed::<SYSTEMTIME>() };
-        let mut system_time_ptr: *mut SYSTEMTIME = &mut system_time;
+        let system_time_ptr: *mut SYSTEMTIME = &mut system_time;
         let result = unsafe { FileTimeToSystemTime(&self.ftLastWriteTime, system_time_ptr) };
 
         if result != 0 {
@@ -198,13 +207,6 @@ impl FILE_INFORMATION {
     }
 }
 
-// not using
-// #[derive(Debug)]
-// struct DirInfo {
-//     size_bytes: u64,
-//     children: Vec<u64>,
-// }
-
 #[derive(Debug, Clone)]
 pub struct FileInfo {
     pub name: String,
@@ -218,7 +220,7 @@ pub struct FileInfo {
 }
 
 impl FileInfo {
-    fn is_file(&self) -> bool {
+    pub fn is_file(&self) -> bool {
         self.attributes & FILE_ATTRIBUTE_DIRECTORY == 0
     }
 }
@@ -283,8 +285,7 @@ pub fn get_file_information(
 
 fn enumerate_usn_data(volume_guid: String) -> Result<BTreeMap<u64, Vec<FileInfo>>, i32> {
     let volume_handle = get_file_read_handle(&volume_guid).expect("somethin' ain't right");
-    // let mut file_info_records: HashMap<u64, Vec<FILE_INFORMATION>> = HashMap::new(); // Vec::with_capacity(524_288);
-    let mut records: BTreeMap<u64, Vec<FileInfo>> = BTreeMap::new(); // Vec::with_capacity(524_288);
+    let mut records: BTreeMap<u64, Vec<FileInfo>> = BTreeMap::new();
     let mut output_buffer = [0u8; 1024 * 128]; // data out from DeviceIoControl()
     let mut input_buffer = MFT_ENUM_DATA_V0 {
         // into DeviceIoControl()
@@ -313,7 +314,7 @@ fn enumerate_usn_data(volume_guid: String) -> Result<BTreeMap<u64, Vec<FileInfo>
             ) == 0
             {
                 match GetLastError() {
-                    38 => {
+                    ERROR_HANDLE_EOF => {
                         mft_eof = true;
                         continue;
                     }
@@ -341,17 +342,28 @@ fn enumerate_usn_data(volume_guid: String) -> Result<BTreeMap<u64, Vec<FileInfo>
             // get FILE_INFORMATION
             match get_file_information(usn_record.FileReferenceNumber, volume_handle) {
                 Ok(file_info) => {
-                    // todo fill in info and add FileInfo to btree
+                    //todo how to deal with files that have > 1 links?
+                    if file_info.nNumberOfLinks > 1 {
+                        println!(
+                            "{} has {} links",
+                            usn_record.file_name(),
+                            file_info.nNumberOfLinks
+                        );
+                    }
                     if let Some(value) = records.get_mut(&usn_record.ParentFileReferenceNumber) {
                         value.push(FileInfo {
                             name: usn_record.file_name(),
                             reference_number: usn_record.FileReferenceNumber,
                             parent_reference_number: usn_record.ParentFileReferenceNumber,
-                            attributes: usn_record.FileAttributes,
-                            size_bytes: file_info.file_size(),
+                            attributes: file_info.dwFileAttributes,
+                            size_bytes: if file_info.is_file() {
+                                file_info.file_size()
+                            } else {
+                                0
+                            },
                             created: file_info.creation_time(),
                             last_accessed: file_info.last_access_time(),
-                            last_written: file_info.creation_time(),
+                            last_written: file_info.last_write_time(),
                         });
                     } else {
                         records.insert(
@@ -360,11 +372,15 @@ fn enumerate_usn_data(volume_guid: String) -> Result<BTreeMap<u64, Vec<FileInfo>
                                 name: usn_record.file_name(),
                                 reference_number: usn_record.FileReferenceNumber,
                                 parent_reference_number: usn_record.ParentFileReferenceNumber,
-                                attributes: usn_record.FileAttributes,
-                                size_bytes: file_info.file_size(),
+                                attributes: file_info.dwFileAttributes,
+                                size_bytes: if file_info.is_file() {
+                                    file_info.file_size()
+                                } else {
+                                    0
+                                },
                                 created: file_info.creation_time(),
                                 last_accessed: file_info.last_access_time(),
-                                last_written: file_info.creation_time(),
+                                last_written: file_info.last_write_time(),
                             }],
                         );
                     }
@@ -431,33 +447,25 @@ pub fn read_mft(volume_root_guid: &str) -> Result<BTreeMap<u64, Vec<FileInfo>>, 
                         get_file_read_handle(&volume_guid).unwrap(),
                     )
                     .unwrap();
-                    dbg!(root_file_usn);
                     records.insert(
-                        root_file_usn.ParentFileReferenceNumber,
+                        0, // set this to be zero so we know it's the root
                         vec![FileInfo {
                             name: root_file_usn.file_name(),
                             reference_number: root_file_usn.FileReferenceNumber,
-                            parent_reference_number: root_file_usn.ParentFileReferenceNumber,
-                            attributes: root_file_usn.FileAttributes,
-                            size_bytes: root_file_info.file_size(),
+                            parent_reference_number: 0, // set this to be 0 so we know it's the root
+                            attributes: root_file_info.dwFileAttributes,
+                            size_bytes: 0,
                             created: root_file_info.creation_time(),
                             last_accessed: root_file_info.last_access_time(),
                             last_written: root_file_info.creation_time(),
                         }],
                     );
+                    calculate_dir_sizes(&mut records);
                 }
                 Err(e) => {
                     println!("error from read_file_usn_data {}", e);
                 }
             }
-
-            // dbg!(
-            //     records.len(),
-            //     records.capacity(),
-            //     std::mem::size_of::<USN_RECORD>(),
-            //     (records.len() * std::mem::size_of::<USN_RECORD>()),
-            //     (records.capacity() * std::mem::size_of::<USN_RECORD>())
-            // );
 
             Ok(records)
         }
@@ -465,23 +473,47 @@ pub fn read_mft(volume_root_guid: &str) -> Result<BTreeMap<u64, Vec<FileInfo>>, 
     }
 }
 
-fn populate_children(
-    parent_file_reference_number: u64,
-    records: &Vec<USN_RECORD>,
-) -> Vec<Node<USN_RECORD>> {
-    records
-        .iter()
-        .filter(|x| x.ParentFileReferenceNumber == parent_file_reference_number)
-        .map(|x| Node {
-            data: *x,
-            children: populate_children(x.FileReferenceNumber, records),
-        })
-        .collect()
+fn calculate_dir_sizes(fs_tree: &mut BTreeMap<u64, Vec<FileInfo>>) {
+    let mut frn_sizes: BTreeMap<u64, u64> = BTreeMap::new();
+    let mut x = 0u64;
+    for item in fs_tree.iter() {
+        for child in item.1.iter().filter(|x| x.is_file() == false) {
+            x += 1;
+            let size = get_size(child.reference_number, &fs_tree);
+            frn_sizes.insert(child.reference_number, size);
+        }
+    }
+    dbg!(x);
+    dbg!(&frn_sizes.len());
+    for item in fs_tree.iter_mut() {
+        for child in item.1.iter_mut().filter(|x| x.is_file() == false) {
+            child.size_bytes = frn_sizes.get(&child.reference_number).unwrap().clone();
+        }
+    }
+}
+pub fn get_size(frn: u64, fs_tree: &BTreeMap<u64, Vec<FileInfo>>) -> u64 {
+    // all non-empty directories should be parents and should be a key in `fs_tree`
+    // we will recursively add child file sizes and return that.
+    // if it isn't a key then it is an empty directory and the size is 0
 
-    // can't do this without mut records, but I need to borrow it above.... hmmmm
-    // records.retain(|x| {
-    //     x.ParentFileReferenceNumber != root_file_info.FileReferenceNumber
-    // });
+    // todo we aren't getting all directory sizes here.... if a directory only contains directories
+    // then we are getting 0... why?
+    let mut size = 0u64;
+    match fs_tree.get(&frn) {
+        Some(item) => {
+            for child in item {
+                if child.is_file() {
+                    size += child.size_bytes;
+                } else {
+                    size += get_size(child.reference_number, &fs_tree);
+                }
+            }
+        }
+        None => {
+            //panic!("no entry {}", frn);
+        }
+    };
+    size
 }
 
 /**
