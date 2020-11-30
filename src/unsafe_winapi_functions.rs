@@ -5,6 +5,7 @@
 
 extern crate winapi;
 
+use self::winapi::um::winioctl::FSCTL_GET_NTFS_VOLUME_DATA;
 use chrono::prelude::*;
 use std::collections::BTreeMap;
 use std::convert::TryInto;
@@ -30,11 +31,16 @@ use winapi::um::winbase::{
     FILE_ID_DESCRIPTOR_u, LookupPrivilegeValueW, OpenFileById, FILE_FLAG_BACKUP_SEMANTICS,
     FILE_ID_DESCRIPTOR,
 };
-use winapi::um::winioctl::{FSCTL_ENUM_USN_DATA, FSCTL_READ_FILE_USN_DATA};
+use winapi::um::winioctl::{
+    FSCTL_ENUM_USN_DATA, FSCTL_GET_NTFS_FILE_RECORD, FSCTL_READ_FILE_USN_DATA,
+    NTFS_FILE_RECORD_INPUT_BUFFER, NTFS_FILE_RECORD_OUTPUT_BUFFER, NTFS_VOLUME_DATA_BUFFER,
+};
 use winapi::um::winnt::{DWORDLONG, HANDLE, LARGE_INTEGER, TOKEN_PRIVILEGES, USN};
 use winapi::um::winnt::{
     //FILE_ATTRIBUTE_ARCHIVE,
     FILE_ATTRIBUTE_DIRECTORY,
+    FILE_READ_ATTRIBUTES,
+    FILE_READ_EA,
     //FILE_ATTRIBUTE_NORMAL,
     //FILE_ATTRIBUTE_READONLY,
     FILE_SHARE_DELETE,
@@ -72,20 +78,19 @@ const USN_RECORD_LENGTH: usize = 320; // size of USN_RECORD in bytes
 
 #[allow(non_snake_case)]
 #[allow(non_camel_case_types)]
-#[repr(C)]
 #[derive(Debug, Copy, Clone)]
+#[repr(C)]
 pub struct USN_RECORD {
     RecordLength: DWORD,
     MajorVersion: WORD,
     MinorVersion: WORD,
     pub FileReferenceNumber: DWORDLONG,
     pub ParentFileReferenceNumber: DWORDLONG,
-    //Usn: USN,
-    Usn: u64,
+    Usn: USN,
     //TimeStamp: LARGE_INTEGER,
-    TimeStamp: u64,
-    Reason: DWORD,
-    SourceInfo: DWORD,
+    //Reason: DWORD,
+    //SourceInfo: DWORD,
+    _invalid: [u8; 16], // previous 3 values are not valid
     SecurityId: DWORD,
     FileAttributes: DWORD,
     FileNameLength: WORD,
@@ -234,6 +239,155 @@ fn to_wstring(value: &str) -> Vec<u16> {
         .collect()
 }
 
+fn get_ntfs_volume_data(volume_handle: HANDLE) {
+    const buffer_size: usize = std::mem::size_of::<NTFS_VOLUME_DATA_BUFFER>();
+    let mut output_buffer = [0u8; buffer_size];
+    let mut bytes_read = 0u32;
+
+    match unsafe {
+        DeviceIoControl(
+            volume_handle,
+            FSCTL_GET_NTFS_VOLUME_DATA,
+            ptr::null_mut(),
+            0,
+            output_buffer.as_mut_ptr() as *mut NTFS_VOLUME_DATA_BUFFER as LPVOID,
+            output_buffer.len() as DWORD,
+            &mut bytes_read,
+            ptr::null_mut(),
+        )
+    } {
+        0 => { /* error */ }
+        _ => {
+            let volume_data = unsafe {
+                std::mem::transmute::<[u8; buffer_size], NTFS_VOLUME_DATA_BUFFER>(output_buffer)
+            };
+            dbg!(bytes_read);
+            dbg!(volume_data.BytesPerFileRecordSegment);
+            dbg!(unsafe { volume_data.VolumeSerialNumber.QuadPart() });
+            let size_of_file_record = mem::size_of::<NTFS_VOLUME_DATA_BUFFER>()
+                + (volume_data.BytesPerFileRecordSegment as usize)
+                - 1;
+            dbg!(size_of_file_record);
+        }
+    }
+}
+
+// ntfs_record
+// todo read ntfs file records
+// try to calculate sizes from this...
+// should fix the problem getting handles on individual files and maybe speed things up.
+fn get_ntfs_file_record(frn: u64, volume_handle: HANDLE) {
+    let frn = unsafe {
+        let mut large_i: LARGE_INTEGER = std::mem::zeroed::<LARGE_INTEGER>();
+        *large_i.QuadPart_mut() = frn as i64;
+        large_i
+    };
+
+    let input_buffer: NTFS_FILE_RECORD_INPUT_BUFFER = NTFS_FILE_RECORD_INPUT_BUFFER {
+        FileReferenceNumber: frn,
+    };
+
+    let mut output_buffer = [0u8; 1119];
+    let mut bytes_read = 0u32;
+    match unsafe {
+        DeviceIoControl(
+            volume_handle,
+            FSCTL_GET_NTFS_FILE_RECORD,
+            &input_buffer as *const NTFS_FILE_RECORD_INPUT_BUFFER as LPVOID,
+            mem::size_of::<NTFS_FILE_RECORD_INPUT_BUFFER>() as DWORD,
+            output_buffer.as_mut_ptr() as *mut NTFS_FILE_RECORD_OUTPUT_BUFFER as LPVOID,
+            output_buffer.len() as DWORD,
+            &mut bytes_read as LPDWORD,
+            ptr::null_mut(),
+        )
+    } {
+        0 => {
+            // todo handle error
+            dbg!("error FSTCL_GET_NTFS_FILE_RECORD");
+            dbg!(unsafe { GetLastError() as i32 });
+        }
+        _ => {
+            let output = unsafe {
+                std::mem::transmute::<[u8; 16], NTFS_FILE_RECORD_OUTPUT_BUFFER>(
+                    output_buffer[..16].try_into().expect("shit"),
+                )
+            };
+            assert_eq!(
+                unsafe { *output.FileReferenceNumber.QuadPart() },
+                i64::from_le_bytes(output_buffer[0..8].try_into().expect("asdf"))
+            );
+
+            dbg!(unsafe { frn.QuadPart() });
+            dbg!(unsafe { *output.FileReferenceNumber.QuadPart() });
+            dbg!(output.FileRecordLength);
+            dbg!(output.FileRecordBuffer);
+
+            let new_output: [u8; 1107] = output_buffer[12..].try_into().expect("asdf");
+
+            // buffer header is 12 bytes
+            dbg!(
+                "magic number 'FILE'",
+                String::from_utf8_lossy(new_output[..4].try_into().expect("asdf"))
+            );
+            dbg!(
+                "offset to the update sequence",
+                u16::from_le_bytes(new_output[4..6].try_into().expect("asdfasdf"))
+            );
+            let sq_size = u16::from_le_bytes(new_output[6..8].try_into().expect("asdfasdf"));
+            dbg!("size in words of the update sequence", sq_size);
+            dbg!(
+                "hard link count",
+                u16::from_le_bytes(new_output[0x12..0x14].try_into().expect("asdf"))
+            );
+            dbg!(
+                "offset of first attribute",
+                u16::from_le_bytes(new_output[0x14..0x16].try_into().expect("asdf"))
+            );
+            dbg!(
+                "flags",
+                u16::from_le_bytes(new_output[0x16..0x18].try_into().expect("asdf"))
+            );
+            dbg!(
+                "real size of file record",
+                u32::from_le_bytes(new_output[0x18..0x18 + 4].try_into().expect("asdf"))
+            );
+            dbg!(
+                "allocated size of file record",
+                u32::from_le_bytes(new_output[0x1c..0x1c + 4].try_into().expect("asdf"))
+            );
+            dbg!(
+                "frn to the base FILE record",
+                u64::from_le_bytes(new_output[0x20..0x28].try_into().expect("asdf"))
+            );
+            let sn: [u8; 2] = new_output[0x30..0x32].try_into().expect("asdf");
+            dbg!("update sequence number", u16::from_le_bytes(sn));
+
+            let usa_len = 2 * sq_size - 2;
+            let usa: Vec<u8> = Vec::from(&new_output[0x32..0x32 + usa_len as usize]);
+            dbg!("update sequence array", usa);
+
+            dbg!(
+                "attribute type",
+                u32::from_le_bytes(new_output[0x38..0x3c].try_into().expect("asdf"))
+            );
+            let a_len =
+                u32::from_le_bytes(new_output[0x3c..0x40].try_into().expect("asdf")) as usize;
+            dbg!("attribute length", a_len);
+
+            dbg!(
+                "next attribute",
+                u32::from_le_bytes(
+                    new_output[(56 + a_len)..(56 + 4 + a_len)]
+                        .try_into()
+                        .expect("asdf")
+                )
+            );
+            println!("{:?}", new_output);
+            // println!("{:?}", output_buffer);
+        }
+    }
+}
+
 fn open_file_by_id(frn: u64, volume_handle: HANDLE) -> HANDLE {
     unsafe {
         let mut u: FILE_ID_DESCRIPTOR_u = std::mem::zeroed::<FILE_ID_DESCRIPTOR_u>();
@@ -250,8 +404,8 @@ fn open_file_by_id(frn: u64, volume_handle: HANDLE) -> HANDLE {
         OpenFileById(
             volume_handle,
             fid_ptr,
-            GENERIC_READ,
-            FILE_SHARE_READ, // | FILE_SHARE_WRITE,
+            FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ,
             ptr::null_mut(),
             FILE_FLAG_BACKUP_SEMANTICS,
         )
@@ -264,7 +418,7 @@ pub fn get_file_information(
     return match open_file_by_id(file_reference_number, volume_handle) {
         INVALID_HANDLE_VALUE => {
             /* todo: check if bad handles are a problem */
-            Err(INVALID_HANDLE_VALUE as i32)
+            Err(unsafe { GetLastError() } as i32)
         }
         f_handle => {
             let mut file_info_by_handle: BY_HANDLE_FILE_INFORMATION =
@@ -295,6 +449,7 @@ fn enumerate_usn_data(volume_guid: String) -> Result<BTreeMap<u64, Vec<FileInfo>
     };
     let mut mft_eof: bool = false;
 
+    let mut invalid_handles = 0u32;
     while !mft_eof {
         let mut buffer_cursor: isize = 8;
         let mut bytes_read: u32 = 0;
@@ -328,7 +483,6 @@ fn enumerate_usn_data(volume_guid: String) -> Result<BTreeMap<u64, Vec<FileInfo>
         while buffer_cursor < bytes_read as isize {
             let buffer_pointer = unsafe { output_buffer.as_ptr().offset(buffer_cursor) };
             let usn_record: USN_RECORD = unsafe {
-                // std::mem::transmute(buffer_pointer)
                 std::mem::transmute::<[u8; USN_RECORD_LENGTH], USN_RECORD>(
                     std::slice::from_raw_parts(buffer_pointer, USN_RECORD_LENGTH)
                         .try_into()
@@ -339,17 +493,28 @@ fn enumerate_usn_data(volume_guid: String) -> Result<BTreeMap<u64, Vec<FileInfo>
             // move the cursor to the start of the next record
             buffer_cursor = buffer_cursor + (usn_record.RecordLength as isize);
 
+            // testing
+            if usn_record.file_name() == "mft_muncher.exe" {
+                dbg!(usn_record);
+                dbg!(usn_record.file_name());
+                println!("calling get ntfs volume data");
+                get_ntfs_volume_data(volume_handle);
+                println!("calling get ntfs file record");
+                get_ntfs_file_record(usn_record.FileReferenceNumber, volume_handle);
+                std::process::exit(42);
+            }
+
             // get FILE_INFORMATION
             match get_file_information(usn_record.FileReferenceNumber, volume_handle) {
                 Ok(file_info) => {
                     //todo how to deal with files that have > 1 links?
-                    if file_info.nNumberOfLinks > 1 {
-                        println!(
-                            "{} has {} links",
-                            usn_record.file_name(),
-                            file_info.nNumberOfLinks
-                        );
-                    }
+                    // if usn_record.FileReferenceNumber == 281474976739376 {
+                    //     println!(
+                    //         "{} has {} links",
+                    //         usn_record.file_name(),
+                    //         file_info.nNumberOfLinks
+                    //     );
+                    // }
                     if let Some(value) = records.get_mut(&usn_record.ParentFileReferenceNumber) {
                         value.push(FileInfo {
                             name: usn_record.file_name(),
@@ -385,12 +550,21 @@ fn enumerate_usn_data(volume_guid: String) -> Result<BTreeMap<u64, Vec<FileInfo>
                         );
                     }
                 }
-                Err(_) => {
+                Err(e) => {
                     // todo check for INVALID_FILE_HANDLE or a different error
+                    // println!(
+                    //     "error on file {}, {} [{}\\{}]",
+                    //     usn_record.file_name(),
+                    //     e,
+                    //     usn_record.ParentFileReferenceNumber,
+                    //     usn_record.FileReferenceNumber
+                    // );
+                    invalid_handles += 1;
                 }
             }
         }
     }
+    dbg!(invalid_handles);
     unsafe { CloseHandle(volume_handle) };
     Ok(records)
 }
@@ -637,7 +811,8 @@ pub fn get_file_read_handle(file: &str) -> Result<HANDLE, i32> {
     let handle = unsafe {
         CreateFileW(
             to_wstring(file).as_ptr(),
-            GENERIC_READ,
+            //GENERIC_READ,
+            FILE_READ_EA,
             // opening with FILE_SHARE_READ only gives a ERROR_SHARING_VIOLATION error
             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
             ptr::null_mut(),

@@ -12,7 +12,7 @@ fn main() {
             let records = read_mft(&volume_root_guid).unwrap();
             let read_mft_duration = start_time.elapsed();
             println!(
-                "received a Vec with {} records in {}ms",
+                "received {} records in {}ms",
                 records.len(),
                 read_mft_duration.as_millis()
             );
