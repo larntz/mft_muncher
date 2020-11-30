@@ -46,7 +46,7 @@ use winapi::um::winnt::{
     FILE_SHARE_DELETE,
     FILE_SHARE_READ,
     FILE_SHARE_WRITE,
-    GENERIC_READ,
+    // GENERIC_READ,
     SE_PRIVILEGE_ENABLED,
     TOKEN_ADJUST_PRIVILEGES,
 };
@@ -240,8 +240,8 @@ fn to_wstring(value: &str) -> Vec<u16> {
 }
 
 fn get_ntfs_volume_data(volume_handle: HANDLE) {
-    const buffer_size: usize = std::mem::size_of::<NTFS_VOLUME_DATA_BUFFER>();
-    let mut output_buffer = [0u8; buffer_size];
+    const BUFFER_SIZE: usize = std::mem::size_of::<NTFS_VOLUME_DATA_BUFFER>();
+    let mut output_buffer = [0u8; BUFFER_SIZE];
     let mut bytes_read = 0u32;
 
     match unsafe {
@@ -259,7 +259,7 @@ fn get_ntfs_volume_data(volume_handle: HANDLE) {
         0 => { /* error */ }
         _ => {
             let volume_data = unsafe {
-                std::mem::transmute::<[u8; buffer_size], NTFS_VOLUME_DATA_BUFFER>(output_buffer)
+                std::mem::transmute::<[u8; BUFFER_SIZE], NTFS_VOLUME_DATA_BUFFER>(output_buffer)
             };
             dbg!(bytes_read);
             dbg!(volume_data.BytesPerFileRecordSegment);
@@ -307,83 +307,193 @@ fn get_ntfs_file_record(frn: u64, volume_handle: HANDLE) {
             dbg!(unsafe { GetLastError() as i32 });
         }
         _ => {
+            // output is NTFS_FILE_RECORD_OUTPUT_BUFFER
+            // https://docs.microsoft.com/en-us/windows/win32/api/winioctl/ns-winioctl-ntfs_file_record_output_buffer
+            //
+            // typedef struct {
+            //   LARGE_INTEGER FileReferenceNumber;
+            //   DWORD         FileRecordLength;
+            //   BYTE          FileRecordBuffer[1];
+            // } NTFS_FILE_RECORD_OUTPUT_BUFFER, *PNTFS_FILE_RECORD_OUTPUT_BUFFER;
+            //
+            // output.FileRecordBuffer has the actual file record, but I am using the output_buffer
+            // offset by 12 (8 for LARGE_INTEGER and 4 for DWORD) bytes to parse the record and loop
+            // through attributes.
+            //
+            // For additional info see:
+            // https://www.cse.scu.edu/~tschwarz/coen252_07Fall/Lectures/NTFS.html
+            // https://flatcap.org/linux-ntfs/ntfs/concepts/file_record.html
+            // https://flatcap.org/linux-ntfs/ntfs/concepts/attribute_header.html
+            //
+
             let output = unsafe {
                 std::mem::transmute::<[u8; 16], NTFS_FILE_RECORD_OUTPUT_BUFFER>(
                     output_buffer[..16].try_into().expect("shit"),
                 )
             };
-            assert_eq!(
-                unsafe { *output.FileReferenceNumber.QuadPart() },
-                i64::from_le_bytes(output_buffer[0..8].try_into().expect("asdf"))
-            );
 
+            // todo why don't these match? Should they? What gives, man?
             dbg!(unsafe { frn.QuadPart() });
             dbg!(unsafe { *output.FileReferenceNumber.QuadPart() });
             dbg!(output.FileRecordLength);
-            dbg!(output.FileRecordBuffer);
 
-            let new_output: [u8; 1107] = output_buffer[12..].try_into().expect("asdf");
+            let file_record: Vec<u8> = output_buffer[12..(output.FileRecordLength as usize + 12)]
+                .try_into()
+                .expect("asdf");
+            dbg!(file_record.len());
+            assert_eq!(output.FileRecordLength as usize, file_record.len());
 
-            // buffer header is 12 bytes
-            dbg!(
-                "magic number 'FILE'",
-                String::from_utf8_lossy(new_output[..4].try_into().expect("asdf"))
+            let mut magic: [u8; 4] = Default::default();
+            magic.copy_from_slice(&file_record[..4]);
+            // verify the first 4 bytes == 'FILE'
+            assert_eq!(magic, [70, 73, 76, 69,]);
+            println!("\n\n-----\nmagic number {:?}", magic);
+
+            let offset_to_usn: usize =
+                u16::from_le_bytes(file_record[0x04..0x06].try_into().expect("byte me")) as usize;
+            println!(
+                "\toffset to the update sequence: {:#x} ({})",
+                offset_to_usn, offset_to_usn
             );
-            dbg!(
-                "offset to the update sequence",
-                u16::from_le_bytes(new_output[4..6].try_into().expect("asdfasdf"))
+
+            let update_sequence_array_size =
+                u16::from_le_bytes(file_record[0x06..0x08].try_into().expect("byte me"));
+
+            println!(
+                "\tsize in words of the update sequence {} ( size == 2 * update_sequence_array_size - 2 == {})",
+                update_sequence_array_size,
+                2 * update_sequence_array_size - 2,
             );
-            let sq_size = u16::from_le_bytes(new_output[6..8].try_into().expect("asdfasdf"));
-            dbg!("size in words of the update sequence", sq_size);
-            dbg!(
-                "hard link count",
-                u16::from_le_bytes(new_output[0x12..0x14].try_into().expect("asdf"))
-            );
-            dbg!(
-                "offset of first attribute",
-                u16::from_le_bytes(new_output[0x14..0x16].try_into().expect("asdf"))
-            );
-            dbg!(
-                "flags",
-                u16::from_le_bytes(new_output[0x16..0x18].try_into().expect("asdf"))
-            );
+
+            let sequence_number =
+                u16::from_le_bytes(file_record[0x10..0x12].try_into().expect("byte me"));
+            println!("\tsequence number {}", sequence_number);
+
+            let hard_link_count =
+                u16::from_le_bytes(file_record[0x12..0x14].try_into().expect("byte me"));
+            println!("\thard link count {}", hard_link_count);
+
+            let mut attribute_offset =
+                u16::from_le_bytes(file_record[0x14..0x16].try_into().expect("byte me")) as usize;
+            println!("\toffset of first attribute {:#x}", attribute_offset,);
+
+            let flags = u16::from_le_bytes(file_record[0x16..0x18].try_into().expect("byte me"));
+            println!("\tflags {:#x} (0x01 == in use, 0x02 == directory", flags);
+
+            /* not needed for my purposes
             dbg!(
                 "real size of file record",
-                u32::from_le_bytes(new_output[0x18..0x18 + 4].try_into().expect("asdf"))
+                u32::from_le_bytes(file_record[0x18..0x18 + 4].try_into().expect("byte me"))
             );
             dbg!(
                 "allocated size of file record",
-                u32::from_le_bytes(new_output[0x1c..0x1c + 4].try_into().expect("asdf"))
+                u32::from_le_bytes(file_record[0x1c..0x1c + 4].try_into().expect("byte me"))
             );
-            dbg!(
-                "frn to the base FILE record",
-                u64::from_le_bytes(new_output[0x20..0x28].try_into().expect("asdf"))
+            */
+
+            let base_record_frn =
+                u64::from_le_bytes(file_record[0x20..0x28].try_into().expect("byte me"));
+            println!("\tfrn to the base FILE record {}", base_record_frn);
+
+            let update_sequence_number: [u8; 2] = file_record[offset_to_usn..offset_to_usn + 2]
+                .try_into()
+                .expect("byte me");
+            println!(
+                "\tupdate sequence number {}",
+                u16::from_le_bytes(update_sequence_number),
             );
-            let sn: [u8; 2] = new_output[0x30..0x32].try_into().expect("asdf");
-            dbg!("update sequence number", u16::from_le_bytes(sn));
 
-            let usa_len = 2 * sq_size - 2;
-            let usa: Vec<u8> = Vec::from(&new_output[0x32..0x32 + usa_len as usize]);
-            dbg!("update sequence array", usa);
+            let usa_len = 2 * update_sequence_array_size - 2;
+            let usa: Vec<u8> = Vec::from(&file_record[0x32..0x32 + usa_len as usize]);
+            println!("\tupdate sequence array {:?}", usa);
+            println!("\t-----");
 
-            dbg!(
-                "attribute type",
-                u32::from_le_bytes(new_output[0x38..0x3c].try_into().expect("asdf"))
-            );
-            let a_len =
-                u32::from_le_bytes(new_output[0x3c..0x40].try_into().expect("asdf")) as usize;
-            dbg!("attribute length", a_len);
+            let mut attribute_eof = false;
+            while !attribute_eof {
+                let start_rec = attribute_offset as usize;
 
-            dbg!(
-                "next attribute",
-                u32::from_le_bytes(
-                    new_output[(56 + a_len)..(56 + 4 + a_len)]
+                let offset = start_rec;
+                let attribute_type = u32::from_le_bytes(
+                    file_record[offset..offset + 0x04]
                         .try_into()
-                        .expect("asdf")
-                )
-            );
-            println!("{:?}", new_output);
-            // println!("{:?}", output_buffer);
+                        .expect("byte me"),
+                );
+                println!("\t\tattribute type {:#x}", attribute_type);
+
+                let offset = start_rec + 0x04; // length offset is 0x04
+                let attribute_length = u32::from_le_bytes(
+                    file_record[offset..offset + 0x04]
+                        .try_into()
+                        .expect("byte me"),
+                ) as usize;
+                println!("\t\tattribute length {}", attribute_length);
+
+                // add these to get the start of the next attribute record
+                attribute_offset += attribute_length;
+
+                let offset = start_rec + 0x08;
+                let attribute_resident =
+                    u8::from_le_bytes(file_record[offset..offset + 1].try_into().expect("byte me"));
+                println!(
+                    "\t\tattribute resident flag {:#x} (0x0 == resident, 0x1 == non-resident",
+                    attribute_resident
+                );
+
+                let offset = start_rec + 0x09;
+                let attribute_name_length =
+                    u8::from_le_bytes(file_record[offset..offset + 1].try_into().expect("byte me"));
+                println!("\t\tattribute name length {}", attribute_name_length);
+
+                let offset = start_rec + 0x0a;
+                let attribute_name_offset = u16::from_le_bytes(
+                    file_record[offset..offset + 2].try_into().expect("byte me"),
+                );
+                println!("\t\tattribute name offset {}", attribute_name_offset);
+
+                let offset = start_rec + 0x0c;
+                let attribute_flags = u16::from_le_bytes(
+                    file_record[offset..offset + 2].try_into().expect("byte me"),
+                );
+                println!("\t\tattribute flags {:#x}", attribute_flags);
+
+                // let attribute_type = u32::from_le_bytes(
+                //     file_record[attribute_offset..(attribute_offset + 4)]
+                //         .try_into()
+                //         .expect("asdf"),
+                // );
+                // attribute_offset += 0x04;
+                // let attribute_length = u32::from_le_bytes(
+                //     file_record[attribute_offset..attribute_offset + 0x04]
+                //         .try_into()
+                //         .expect("byte me"),
+                // );
+                // attribute_offset += 0x08;
+                // let attribute_resident = u8::from_le_bytes(
+                //     file_record[attribute_offset..(attribute_offset + 0x1)]
+                //         .try_into()
+                //         .expect("byte me"),
+                // );
+                // attribute_offset += 0x09;
+                // let attribute_name_length = u8::from_le_bytes(
+                //     file_record[attribute_offset..attribute_offset + 0x01]
+                //         .try_into()
+                //         .expect("byte me"),
+                // );
+
+                // println!("attribute type {:#x}", attribute_type);
+                // println!(
+                //     "attribute length {:#x} ({})",
+                //     attribute_length, attribute_length
+                // );
+                // println!("resident flag {:#x}", attribute_resident);
+                // println!(
+                //     "name length {:#x}, ({})",
+                //     attribute_name_length, attribute_name_length
+                // );
+
+                println!("\n\n{:?}", file_record);
+                attribute_eof = true;
+            }
         }
     }
 }
@@ -550,7 +660,7 @@ fn enumerate_usn_data(volume_guid: String) -> Result<BTreeMap<u64, Vec<FileInfo>
                         );
                     }
                 }
-                Err(e) => {
+                Err(_e) => {
                     // todo check for INVALID_FILE_HANDLE or a different error
                     // println!(
                     //     "error on file {}, {} [{}\\{}]",
