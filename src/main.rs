@@ -16,32 +16,35 @@ fn main() {
                 records.len(),
                 read_mft_duration.as_millis()
             );
-            let start_time = Instant::now();
-            let root_dir_frn = (records.get(&0).unwrap()).first().unwrap().frn;
-            for rec in records.iter().filter(|x| *x.0 == root_dir_frn) {
-                println!("\n=> {} has {} children", rec.0, rec.1.len());
-                for f in rec.1.iter() {
-                    println!(
-                        "{}{} is {} bytes [{}]",
-                        drive, f.file_name, f.real_size_bytes, f.frn,
-                    );
-                    for c_rec in records.iter().filter(|x| *x.0 == f.frn) {
-                        println!("\n=> {} has {} children", c_rec.0, c_rec.1.len());
-                        for cf in c_rec.1.iter() {
-                            println!(
-                                "{}{}\\{} is {} bytes [{}]",
-                                drive, f.file_name, cf.file_name, cf.real_size_bytes, cf.frn,
-                            );
-                        }
-                    }
-                }
-            }
-            let search_files = start_time.elapsed();
-            println!("searched in {}ms", search_files.as_millis());
-            let branding = records.get(&281474976712649);
-            dbg!(branding);
-            let basebrd = records.get(&281474976712650);
-            dbg!(basebrd);
+            // let start_time = Instant::now();
+            // let root_dir_frn = (records.get(&0).unwrap()).first().unwrap().frn;
+            // for rec in records.iter().filter(|x| *x.0 == root_dir_frn) {
+            //     println!("\n=> {} has {} children", rec.0, rec.1.len());
+            //     for f in rec.1.iter() {
+            //         println!(
+            //             "{}{} is {} bytes [{}]",
+            //             drive, f.file_name, f.real_size_bytes, f.frn,
+            //         );
+            //         for c_rec in records.iter().filter(|x| *x.0 == f.frn) {
+            //             println!("\n=> {} has {} children", c_rec.0, c_rec.1.len());
+            //             for cf in c_rec.1.iter() {
+            //                 println!(
+            //                     "{}{}\\{} is {} bytes [{}]",
+            //                     drive, f.file_name, cf.file_name, cf.real_size_bytes, cf.frn,
+            //                 );
+            //             }
+            //         }
+            //     }
+            // }
+            // let search_files = start_time.elapsed();
+            // println!("searched in {}ms", search_files.as_millis());
+
+            // let x = records.get(&281474976712649);
+            let x = records.get(&61080069946295717);
+            dbg!(x);
+            // let y = records.get(&281474976712650);
+            let y = records.get(&15762598695893097);
+            dbg!(y);
 
             let _ = std::process::Command::new("cmd.exe")
                 .arg("/c")
