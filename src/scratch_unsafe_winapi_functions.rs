@@ -217,13 +217,13 @@ pub struct FileRecord {
     pub file_name: String,
     pub frn: u64,
     pub parent_frn: Vec<u64>,
-    pub children_frn: Vec<u64>,
+    pub child_frn: Vec<u64>,
     pub attributes: u32,
-    pub allocated_size_bytes: u32,
-    pub real_size_bytes: u32,
-    pub created: u64,
-    pub accessed: u64,
-    pub written: u64,
+    pub allocated_size_bytes: u64,
+    pub real_size_bytes: u64,
+    created: u64,
+    accessed: u64,
+    written: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -253,7 +253,7 @@ fn to_wstring(value: &str) -> Vec<u16> {
         .collect()
 }
 
-fn get_ntfs_file_record_size(volume_handle: HANDLE) -> Result<usize, i32> {
+fn get_ntfs_volume_data(volume_handle: HANDLE) {
     const BUFFER_SIZE: usize = std::mem::size_of::<NTFS_VOLUME_DATA_BUFFER>();
     let mut output_buffer = [0u8; BUFFER_SIZE];
     let mut bytes_read = 0u32;
@@ -270,17 +270,18 @@ fn get_ntfs_file_record_size(volume_handle: HANDLE) -> Result<usize, i32> {
             ptr::null_mut(),
         )
     } {
-        0 => {
-            /* error */
-            Err(unsafe { GetLastError() as i32 })
-        }
+        0 => { /* error */ }
         _ => {
             let volume_data = unsafe {
                 std::mem::transmute::<[u8; BUFFER_SIZE], NTFS_VOLUME_DATA_BUFFER>(output_buffer)
             };
-            Ok(mem::size_of::<NTFS_VOLUME_DATA_BUFFER>()
+            dbg!(bytes_read);
+            dbg!(volume_data.BytesPerFileRecordSegment);
+            dbg!(unsafe { volume_data.VolumeSerialNumber.QuadPart() });
+            let size_of_file_record = mem::size_of::<NTFS_VOLUME_DATA_BUFFER>()
                 + (volume_data.BytesPerFileRecordSegment as usize)
-                - 1)
+                - 1;
+            dbg!(size_of_file_record);
         }
     }
 }
@@ -314,20 +315,18 @@ fn get_time_from_filetime(file_time: u64) -> DateTime<Utc> {
 // todo read ntfs file records
 // try to calculate sizes from this...
 // should fix the problem getting handles on individual files and maybe speed things up.
-fn get_ntfs_file_record(frn: u64, volume_handle: HANDLE) -> Result<FileRecord, i32> {
-    let frn_l = unsafe {
+fn get_ntfs_file_record(frn: u64, volume_handle: HANDLE) {
+    let frn = unsafe {
         let mut large_i: LARGE_INTEGER = std::mem::zeroed::<LARGE_INTEGER>();
         *large_i.QuadPart_mut() = frn as i64;
         large_i
     };
 
     let input_buffer: NTFS_FILE_RECORD_INPUT_BUFFER = NTFS_FILE_RECORD_INPUT_BUFFER {
-        FileReferenceNumber: frn_l,
+        FileReferenceNumber: frn,
     };
-    // todo how can I do this???
-    //const FILE_RECORD_SIZE: usize = get_ntfs_file_record_size(volume_handle).unwrap();
-    const FILE_RECORD_SIZE: usize = 1119;
-    let mut output_buffer = [0u8; FILE_RECORD_SIZE];
+
+    let mut output_buffer = [0u8; 1119];
     let mut bytes_read = 0u32;
     match unsafe {
         DeviceIoControl(
@@ -345,7 +344,6 @@ fn get_ntfs_file_record(frn: u64, volume_handle: HANDLE) -> Result<FileRecord, i
             // todo handle error
             dbg!("error FSTCL_GET_NTFS_FILE_RECORD");
             dbg!(unsafe { GetLastError() as i32 });
-            Err(unsafe { GetLastError() as i32 })
         }
         _ => {
             // output is NTFS_FILE_RECORD_OUTPUT_BUFFER
@@ -374,55 +372,52 @@ fn get_ntfs_file_record(frn: u64, volume_handle: HANDLE) -> Result<FileRecord, i
             };
 
             // todo why don't these match? Should they? What gives, man?
-            // dbg!(unsafe { frn.QuadPart() });
-            // dbg!(unsafe { *output.FileReferenceNumber.QuadPart() });
-            // dbg!(output.FileRecordLength);
+            dbg!(unsafe { frn.QuadPart() });
+            dbg!(unsafe { *output.FileReferenceNumber.QuadPart() });
+            dbg!(output.FileRecordLength);
 
             let file_record: Vec<u8> = output_buffer[12..(output.FileRecordLength as usize + 12)]
                 .try_into()
                 .expect("asdf");
-            // dbg!(file_record.len());
-            // assert_eq!(output.FileRecordLength as usize, file_record.len());
+            dbg!(file_record.len());
+            assert_eq!(output.FileRecordLength as usize, file_record.len());
 
             let mut magic: [u8; 4] = Default::default();
             magic.copy_from_slice(&file_record[..4]);
             // verify the first 4 bytes == 'FILE'
-            if magic != [70, 73, 76, 69] {
-                return Err(-9999);
-            }
-            // assert_eq!(magic, [70, 73, 76, 69,]);
-            // println!("\n\n-----\nmagic number {:?}", magic);
+            assert_eq!(magic, [70, 73, 76, 69,]);
+            println!("\n\n-----\nmagic number {:?}", magic);
 
             let offset_to_usn: usize =
                 u16::from_le_bytes(file_record[0x04..0x06].try_into().expect("byte me")) as usize;
-            // println!(
-            //     "\toffset to the update sequence: {:#x} ({})",
-            //     offset_to_usn, offset_to_usn
-            // );
+            println!(
+                "\toffset to the update sequence: {:#x} ({})",
+                offset_to_usn, offset_to_usn
+            );
 
             let update_sequence_array_size =
                 u16::from_le_bytes(file_record[0x06..0x08].try_into().expect("byte me"));
 
-            // println!(
-            //     "\tsize in words of the update sequence {} ( size == 2 * update_sequence_array_size - 2 == {})",
-            //     update_sequence_array_size,
-            //     2 * update_sequence_array_size - 2,
-            // );
+            println!(
+                "\tsize in words of the update sequence {} ( size == 2 * update_sequence_array_size - 2 == {})",
+                update_sequence_array_size,
+                2 * update_sequence_array_size - 2,
+            );
 
             let sequence_number =
                 u16::from_le_bytes(file_record[0x10..0x12].try_into().expect("byte me"));
-            // println!("\tsequence number {}", sequence_number);
+            println!("\tsequence number {}", sequence_number);
 
             let hard_link_count =
                 u16::from_le_bytes(file_record[0x12..0x14].try_into().expect("byte me"));
-            // println!("\thard link count {}", hard_link_count);
+            println!("\thard link count {}", hard_link_count);
 
             let mut attribute_offset =
                 u16::from_le_bytes(file_record[0x14..0x16].try_into().expect("byte me")) as usize;
-            // println!("\toffset of first attribute {:#x}", attribute_offset,);
+            println!("\toffset of first attribute {:#x}", attribute_offset,);
 
             let flags = u16::from_le_bytes(file_record[0x16..0x18].try_into().expect("byte me"));
-            // println!("\tflags {:#x} (0x01 == in use, 0x02 == directory", flags);
+            println!("\tflags {:#x} (0x01 == in use, 0x02 == directory", flags);
 
             /* not needed for my purposes
             dbg!(
@@ -437,40 +432,30 @@ fn get_ntfs_file_record(frn: u64, volume_handle: HANDLE) -> Result<FileRecord, i
 
             let base_record_frn =
                 u64::from_le_bytes(file_record[0x20..0x28].try_into().expect("byte me"));
-            //println!("\tfrn to the base FILE record {}", base_record_frn);
-            assert_eq!(base_record_frn, 0);
+            println!("\tfrn to the base FILE record {}", base_record_frn);
 
             let update_sequence_number: [u8; 2] = file_record[offset_to_usn..offset_to_usn + 2]
                 .try_into()
                 .expect("byte me");
-            // println!(
-            //     "\tupdate sequence number {}",
-            //     u16::from_le_bytes(update_sequence_number),
-            // );
+            println!(
+                "\tupdate sequence number {}",
+                u16::from_le_bytes(update_sequence_number),
+            );
 
             let usa_len = 2 * update_sequence_array_size - 2;
             let usa: Vec<u8> = Vec::from(&file_record[0x32..0x32 + usa_len as usize]);
-            // println!("\tupdate sequence array {:?}", usa);
-
-            let mut parents: Vec<u64> = Vec::new();
-            let mut created: u64 = 0;
-            let mut accessed: u64 = 0;
-            let mut written: u64 = 0;
-            let mut alloc_size: u32 = 0;
-            let mut real_size: u32 = 0;
-            let mut attributes: u32 = 0;
-            let mut file_name: String = String::new();
+            println!("\tupdate sequence array {:?}", usa);
 
             let mut attribute_eof = false;
             while !attribute_eof && attribute_offset < file_record.len() {
-                // println!("\t-----");
+                println!("\t-----");
                 let start_rec = attribute_offset as usize;
 
                 let offset = start_rec;
                 let attribute_type = u32::from_le_bytes(
                     file_record[offset..offset + 4].try_into().expect("byte me"),
                 );
-                // println!("\t\tattribute type {:#x}", attribute_type);
+                println!("\t\tattribute type {:#x}", attribute_type);
                 // attribute list is terminated with 0xffffffff
                 if attribute_type == 0xffffffff {
                     attribute_eof = true;
@@ -480,59 +465,59 @@ fn get_ntfs_file_record(frn: u64, volume_handle: HANDLE) -> Result<FileRecord, i
                 let offset = start_rec + 0x08;
                 let attribute_resident =
                     u8::from_le_bytes(file_record[offset..offset + 1].try_into().expect("byte me"));
-                // println!(
-                //     "\t\tattribute resident flag {:#x} (0x0 == resident, 0x1 == non-resident",
-                //     attribute_resident
-                // );
+                println!(
+                    "\t\tattribute resident flag {:#x} (0x0 == resident, 0x1 == non-resident",
+                    attribute_resident
+                );
 
                 let offset = start_rec + 0x04; // length offset is 0x04
                 let attribute_length_header = u32::from_le_bytes(
                     file_record[offset..offset + 4].try_into().expect("byte me"),
                 ) as usize;
-                // println!(
-                //     "\t\tattribute length (incl. header) {}",
-                //     attribute_length_header
-                // );
+                println!(
+                    "\t\tattribute length (incl. header) {}",
+                    attribute_length_header
+                );
 
                 // add to get the start of the next attribute record
                 attribute_offset += attribute_length_header;
 
-                // let offset = start_rec + 0x09;
-                // let attribute_name_length =
-                //     u8::from_le_bytes(file_record[offset..offset + 1].try_into().expect("byte me"));
-                // // println!("\t\tattribute name length {}", attribute_name_length);
+                let offset = start_rec + 0x09;
+                let attribute_name_length =
+                    u8::from_le_bytes(file_record[offset..offset + 1].try_into().expect("byte me"));
+                println!("\t\tattribute name length {}", attribute_name_length);
 
-                // let offset = start_rec + 0x0a;
-                // let attribute_name_offset = u16::from_le_bytes(
-                //     file_record[offset..offset + 2].try_into().expect("byte me"),
-                // );
-                // // println!("\t\tattribute name offset {:#x}", attribute_name_offset);
+                let offset = start_rec + 0x0a;
+                let attribute_name_offset = u16::from_le_bytes(
+                    file_record[offset..offset + 2].try_into().expect("byte me"),
+                );
+                println!("\t\tattribute name offset {:#x}", attribute_name_offset);
 
-                // let offset = start_rec + 0x0c;
-                // let attribute_flags = u16::from_le_bytes(
-                //     file_record[offset..offset + 2].try_into().expect("byte me"),
-                // );
-                // // println!("\t\tattribute flags {:#x}", attribute_flags);
+                let offset = start_rec + 0x0c;
+                let attribute_flags = u16::from_le_bytes(
+                    file_record[offset..offset + 2].try_into().expect("byte me"),
+                );
+                println!("\t\tattribute flags {:#x}", attribute_flags);
 
-                // let offset = start_rec + 0x0e;
-                // let attribute_identifier = u16::from_le_bytes(
-                //     file_record[offset..offset + 2].try_into().expect("byte me"),
-                // );
-                // // println!("\t\tattribute identifier {:#x}", attribute_identifier);
+                let offset = start_rec + 0x0e;
+                let attribute_identifier = u16::from_le_bytes(
+                    file_record[offset..offset + 2].try_into().expect("byte me"),
+                );
+                println!("\t\tattribute identifier {:#x}", attribute_identifier);
 
                 if attribute_resident == 0x0 {
-                    // let offset = start_rec + 0x10;
-                    // let attribute_length = u32::from_le_bytes(
-                    //     file_record[offset..offset + 4].try_into().expect("byte me"),
-                    // );
-                    // // println!("\t\tattribute length {} bytes", attribute_length);
+                    let offset = start_rec + 0x10;
+                    let attribute_length = u32::from_le_bytes(
+                        file_record[offset..offset + 4].try_into().expect("byte me"),
+                    );
+                    println!("\t\tattribute length {} bytes", attribute_length);
 
                     let offset = start_rec + 0x14;
                     let attribute_content_offset = u16::from_le_bytes(
                         file_record[offset..offset + 2].try_into().expect("byte me"),
                     );
-                    // println!("\t\tcontent offset {:#x}", attribute_content_offset);
-                    // println!(" ");
+                    println!("\t\tcontent offset {:#x}", attribute_content_offset);
+                    println!(" ");
 
                     let offset = start_rec + attribute_content_offset as usize;
                     match attribute_type {
@@ -542,33 +527,33 @@ fn get_ntfs_file_record(frn: u64, volume_handle: HANDLE) -> Result<FileRecord, i
                             // https://flatcap.org/linux-ntfs/ntfs/attributes/standard_information.html
 
                             // create time
-                            created = u64::from_le_bytes(
+                            let time = u64::from_le_bytes(
                                 file_record[offset..offset + 8].try_into().expect("byte me"),
                             );
-                            // let time = get_time_from_filetime(time);
-                            // println!("\t\tcreate time: {}", time);
+                            let time = get_time_from_filetime(time);
+                            println!("\t\tcreate time: {}", time);
 
                             let offset = start_rec + attribute_content_offset as usize + 0x08;
-                            // last written/modified time
-                            written = u64::from_le_bytes(
+                            // modified time
+                            let time = u64::from_le_bytes(
                                 file_record[offset..offset + 8].try_into().expect("byte me"),
                             );
-                            // let time = get_time_from_filetime(time);
-                            // println!("\t\tmodified time: {}", time);
+                            let time = get_time_from_filetime(time);
+                            println!("\t\tmodified time: {}", time);
 
                             let offset = start_rec + attribute_content_offset as usize + 0x18;
-                            // accessed/read time
-                            accessed = u64::from_le_bytes(
+                            // read time
+                            let time = u64::from_le_bytes(
                                 file_record[offset..offset + 8].try_into().expect("byte me"),
                             );
-                            // let time = get_time_from_filetime(time);
-                            // println!("\t\tread time: {}", time);
+                            let time = get_time_from_filetime(time);
+                            println!("\t\tread time: {}", time);
 
                             let offset = start_rec + attribute_content_offset as usize + 0x20;
-                            attributes = u32::from_le_bytes(
+                            let file_flags = u32::from_le_bytes(
                                 file_record[offset..offset + 4].try_into().expect("byte me"),
                             );
-                            // println!("\t\tfile flags {:#x}", file_flags);
+                            println!("\t\tfile flags {:#x}", file_flags);
                         }
                         0x30 => {
                             // parsing the $FILE_NAME attribute
@@ -579,93 +564,66 @@ fn get_ntfs_file_record(frn: u64, volume_handle: HANDLE) -> Result<FileRecord, i
                             // N.B. All fields, except the parent directory, are only updated when
                             // the filename is changed. Until then, they just become out of date.
                             // $STANDARD_INFORMATION Attribute, however, will always be kept up-to-date.
-                            parents.push(u64::from_le_bytes(
+                            let parent_ref = u64::from_le_bytes(
                                 file_record[offset..offset + 8].try_into().expect("byte me"),
-                            ));
-                            // println!("\t\tfile parent ref: {}", parent_ref);
+                            );
+                            println!("\t\tfile parent ref: {}", parent_ref);
+
+                            let offset = start_rec + attribute_content_offset as usize + 0x38;
+                            let file_name_flags = u32::from_le_bytes(
+                                file_record[offset..offset + 4].try_into().expect("byte me"),
+                            );
+                            println!("\t\tfile name flags: {:#x}", file_name_flags);
+
+                            let offset = start_rec + attribute_content_offset as usize + 0x40;
+                            let file_name_length = u8::from_le_bytes(
+                                file_record[offset..offset + 1].try_into().expect("byte me"),
+                            );
+                            println!("\t\tfile name length {}", file_name_length);
 
                             let offset = start_rec + attribute_content_offset as usize + 0x41;
                             let file_namespace = u8::from_le_bytes(
                                 file_record[offset..offset + 1].try_into().expect("byte me"),
                             );
-                            // println!(
-                            //     "\t\tfile namespace {} ( 0 posix, 1 win32, 2 dos, 3 win32 & dos)",
-                            //     file_namespace
-                            // );
+                            println!(
+                                "\t\tfile namespace {} ( 0 posix, 1 win32, 2 dos, 3 win32 & dos)",
+                                file_namespace
+                            );
 
-                            // let offset = start_rec + attribute_content_offset as usize + 0x38;
-                            // let file_name_flags = u32::from_le_bytes(
-                            //     file_record[offset..offset + 4].try_into().expect("byte me"),
-                            // );
-                            // println!("\t\tfile name flags: {:#x}", file_name_flags);
-                            if file_namespace == 0 {
-                                let offset = start_rec + attribute_content_offset as usize + 0x40;
-                                let file_name_length = u8::from_le_bytes(
-                                    file_record[offset..offset + 1].try_into().expect("byte me"),
-                                );
-                                //println!("\t\tfile name length {}", file_name_length);
-
-                                let offset = start_rec + attribute_content_offset as usize + 0x42;
-                                let filename_slice: Vec<u8> = file_record
-                                    [offset..offset + (2 * file_name_length as usize)]
-                                    .try_into()
-                                    .expect("byte me");
-                                file_name.push_str(&String::from_utf8_lossy(&filename_slice));
-                                let f: std::ffi::OsString = std::ffi::OsString::from(
-                                    &String::from_utf8(filename_slice.clone()).unwrap(),
-                                );
-                                // todo figure out this string crap
-                                dbg!(&f);
-                                dbg!(&filename_slice);
-                                //println!(
-                                //    "\t\tname = {}",
-                                //    String::from_utf8_lossy(&file_name_slice)
-                                //);
-                            }
+                            let offset = start_rec + attribute_content_offset as usize + 0x42;
+                            let filename_slice: Vec<u8> = file_record
+                                [offset..offset + (2 * file_name_length as usize)]
+                                .try_into()
+                                .expect("byte me");
+                            println!("\t\tname = {}", String::from_utf8_lossy(&filename_slice));
                         }
                         _ => {}
                     }
                 } else {
-                    match attribute_type {
-                        0x80 => {
-                            let offset = start_rec + 0x28;
-                            // allocated = size on disk (real size rounded up to nearest cluster)
-                            alloc_size = u32::from_le_bytes(
-                                file_record[offset..offset + 4].try_into().expect("byte me"),
-                            );
-                            // println!(
-                            //     "\t\tallocated attribute length {}, {} kb",
-                            //     allocated_attribute_length,
-                            //     allocated_attribute_length / 1024
-                            // );
+                    let offset = start_rec + 0x28;
+                    // allocated = size on disk (real size rounded up to nearest cluster)
+                    let allocated_attribute_length = u32::from_le_bytes(
+                        file_record[offset..offset + 4].try_into().expect("byte me"),
+                    );
+                    println!(
+                        "\t\tallocated attribute length {}, {} kb",
+                        allocated_attribute_length,
+                        allocated_attribute_length / 1024
+                    );
 
-                            // real size of data (<= allocated size)
-                            let offset = start_rec + 0x30;
-                            real_size = u32::from_le_bytes(
-                                file_record[offset..offset + 4].try_into().expect("byte me"),
-                            );
-                            // println!(
-                            //     "\t\treal attribute length {}, {} kb",
-                            //     real_attribute_length,
-                            //     real_attribute_length / 1024
-                            // );
-                        }
-                        _ => { /* nothing to do right now */ }
-                    }
+                    // real size of data (<= allocated size)
+                    let offset = start_rec + 0x30;
+                    let real_attribute_length = u32::from_le_bytes(
+                        file_record[offset..offset + 4].try_into().expect("byte me"),
+                    );
+                    println!(
+                        "\t\treal attribute length {}, {} kb",
+                        real_attribute_length,
+                        real_attribute_length / 1024
+                    );
                 }
             }
-            Ok(FileRecord {
-                file_name,
-                frn,
-                parent_frn: parents,
-                children_frn: Vec::new(),
-                real_size_bytes: real_size,
-                allocated_size_bytes: alloc_size,
-                created,
-                written,
-                accessed,
-                attributes,
-            })
+            println!("\n\n{:?}", file_record);
         }
     }
 }
@@ -719,9 +677,9 @@ pub fn get_file_information(
     };
 }
 
-fn enumerate_usn_data(volume_guid: String) -> Result<BTreeMap<u64, Vec<FileRecord>>, i32> {
+fn enumerate_usn_data(volume_guid: String) -> Result<BTreeMap<u64, Vec<FileInfo>>, i32> {
     let volume_handle = get_file_read_handle(&volume_guid).expect("somethin' ain't right");
-    let mut records: BTreeMap<u64, Vec<FileRecord>> = BTreeMap::new();
+    let mut records: BTreeMap<u64, Vec<FileInfo>> = BTreeMap::new();
     let mut output_buffer = [0u8; 1024 * 128]; // data out from DeviceIoControl()
     let mut input_buffer = MFT_ENUM_DATA_V0 {
         // into DeviceIoControl()
@@ -765,31 +723,30 @@ fn enumerate_usn_data(volume_guid: String) -> Result<BTreeMap<u64, Vec<FileRecor
         while buffer_cursor < bytes_read as isize {
             let buffer_pointer = unsafe { output_buffer.as_ptr().offset(buffer_cursor) };
             let usn_record: &USN_RECORD = unsafe {
-                // std::mem::transmute::<[u8; USN_RECORD_LENGTH], &USN_RECORD>(
-                std::mem::transmute(buffer_pointer)
-                // std::slice::from_raw_parts(buffer_pointer, USN_RECORD_LENGTH)
-                //     .try_into()
-                //     .expect("try_into #2 failed"),
+                std::mem::transmute::<[u8; USN_RECORD_LENGTH], &USN_RECORD>(
+                    std::slice::from_raw_parts(buffer_pointer, USN_RECORD_LENGTH)
+                        .try_into()
+                        .expect("try_into #2 failed"),
+                )
             };
 
             // move the cursor to the start of the next record
             buffer_cursor = buffer_cursor + (usn_record.RecordLength as isize);
 
             // testing
-            // if usn_record.file_name() == "basebrd.dll" {
-            //     dbg!(usn_record);
-            //     dbg!(usn_record.file_name());
-            //     println!("calling get ntfs volume data");
-            //     get_ntfs_file_record_size(volume_handle);
-            //     println!("calling get ntfs file record");
-            //     get_ntfs_file_record(usn_record.FileReferenceNumber, volume_handle);
-            //     //std::process::exit(42);
-            // }
+            if usn_record.file_name() == "basebrd.dll" {
+                dbg!(usn_record);
+                dbg!(usn_record.file_name());
+                println!("calling get ntfs volume data");
+                get_ntfs_volume_data(volume_handle);
+                println!("calling get ntfs file record");
+                get_ntfs_file_record(usn_record.FileReferenceNumber, volume_handle);
+                //std::process::exit(42);
+            }
 
             // get FILE_INFORMATION
-            //match get_file_information(usn_record.FileReferenceNumber, volume_handle) {
-            match get_ntfs_file_record(usn_record.FileReferenceNumber, volume_handle) {
-                Ok(file_record) => {
+            match get_file_information(usn_record.FileReferenceNumber, volume_handle) {
+                Ok(file_info) => {
                     //todo how to deal with files that have > 1 links?
                     // if usn_record.FileReferenceNumber == 281474976739376 {
                     //     println!(
@@ -798,12 +755,39 @@ fn enumerate_usn_data(volume_guid: String) -> Result<BTreeMap<u64, Vec<FileRecor
                     //         file_info.nNumberOfLinks
                     //     );
                     // }
-                    //dbg!(&file_record.parent_frn);
-                    //dbg!(&usn_record.ParentFileReferenceNumber);
                     if let Some(value) = records.get_mut(&usn_record.ParentFileReferenceNumber) {
-                        value.push(file_record);
+                        value.push(FileInfo {
+                            name: usn_record.file_name(),
+                            reference_number: usn_record.FileReferenceNumber,
+                            parent_reference_number: usn_record.ParentFileReferenceNumber,
+                            attributes: file_info.dwFileAttributes,
+                            size_bytes: if file_info.is_file() {
+                                file_info.file_size()
+                            } else {
+                                0
+                            },
+                            created: file_info.creation_time(),
+                            last_accessed: file_info.last_access_time(),
+                            last_written: file_info.last_write_time(),
+                        });
                     } else {
-                        records.insert(usn_record.ParentFileReferenceNumber, vec![file_record]);
+                        records.insert(
+                            usn_record.ParentFileReferenceNumber,
+                            vec![FileInfo {
+                                name: usn_record.file_name(),
+                                reference_number: usn_record.FileReferenceNumber,
+                                parent_reference_number: usn_record.ParentFileReferenceNumber,
+                                attributes: file_info.dwFileAttributes,
+                                size_bytes: if file_info.is_file() {
+                                    file_info.file_size()
+                                } else {
+                                    0
+                                },
+                                created: file_info.creation_time(),
+                                last_accessed: file_info.last_access_time(),
+                                last_written: file_info.last_write_time(),
+                            }],
+                        );
                     }
                 }
                 Err(_e) => {
@@ -863,7 +847,7 @@ fn read_file_usn_data(file: &str) -> Result<USN_RECORD, i32> {
 }
 
 /// walk the master file table (MFT)
-pub fn read_mft(volume_root_guid: &str) -> Result<BTreeMap<u64, Vec<FileRecord>>, i32> {
+pub fn read_mft(volume_root_guid: &str) -> Result<BTreeMap<u64, Vec<FileInfo>>, i32> {
     let mut volume_guid = volume_root_guid.clone().to_string();
     volume_guid.truncate(volume_guid.len() - 1);
     match enumerate_usn_data(volume_guid.clone()) {
@@ -879,31 +863,18 @@ pub fn read_mft(volume_root_guid: &str) -> Result<BTreeMap<u64, Vec<FileRecord>>
                     .unwrap();
                     records.insert(
                         0, // set this to be zero so we know it's the root
-                        vec![FileRecord {
-                            file_name: volume_root_guid.to_string(),
-                            frn: root_file_usn.FileReferenceNumber,
-                            parent_frn: vec![],
-                            children_frn: vec![],
-                            attributes: 0,
-                            allocated_size_bytes: 0,
-                            real_size_bytes: 0,
-                            created: 0,
-                            accessed: 0,
-                            written: 0,
+                        vec![FileInfo {
+                            name: root_file_usn.file_name(),
+                            reference_number: root_file_usn.FileReferenceNumber,
+                            parent_reference_number: 0, // set this to be 0 so we know it's the root
+                            attributes: root_file_info.dwFileAttributes,
+                            size_bytes: 0,
+                            created: root_file_info.creation_time(),
+                            last_accessed: root_file_info.last_access_time(),
+                            last_written: root_file_info.creation_time(),
                         }],
                     );
-
-                    // vec![FileInfo {
-                    //     name: root_file_usn.file_name(),
-                    //     reference_number: root_file_usn.FileReferenceNumber,
-                    //     parent_reference_number: 0, // set this to be 0 so we know it's the root
-                    //     attributes: root_file_info.dwFileAttributes,
-                    //     size_bytes: 0,
-                    //     created: root_file_info.creation_time(),
-                    //     last_accessed: root_file_info.last_access_time(),
-                    //     last_written: root_file_info.creation_time(),
-                    // }],
-                    // calculate_dir_sizes(&mut records);
+                    calculate_dir_sizes(&mut records);
                 }
                 Err(e) => {
                     println!("error from read_file_usn_data {}", e);
