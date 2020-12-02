@@ -3,6 +3,9 @@
 // for an outline of what was implemented here.
 //
 
+use crate::file_record::FileRecord;
+use crate::str_to_wstring;
+
 extern crate winapi;
 
 use chrono::prelude::*;
@@ -11,7 +14,6 @@ use std::collections::BTreeMap;
 use std::convert::TryInto;
 use std::mem;
 use std::ptr;
-use winapi::_core::i64;
 use winapi::shared::minwindef::{DWORD, FILETIME, LPDWORD, LPVOID, MAX_PATH, WORD};
 use winapi::shared::winerror::ERROR_HANDLE_EOF;
 use winapi::um::errhandlingapi::GetLastError;
@@ -214,19 +216,6 @@ impl FILE_INFORMATION {
 }
 
 #[derive(Debug, Clone)]
-pub struct FileRecord {
-    pub file_name: String,
-    pub frn: u64,
-    pub parent_frn: Vec<u64>,
-    pub attributes: u32,
-    pub allocated_size_bytes: u32,
-    pub real_size_bytes: u32,
-    pub created: u64,
-    pub accessed: u64,
-    pub written: u64,
-}
-
-#[derive(Debug, Clone)]
 pub struct FileInfo {
     pub name: String,
     pub reference_number: u64,
@@ -242,15 +231,6 @@ impl FileInfo {
     pub fn is_file(&self) -> bool {
         self.attributes & FILE_ATTRIBUTE_DIRECTORY == 0
     }
-}
-
-/// Converts a &str to a wide OsStr (utf16)
-fn to_wstring(value: &str) -> Vec<u16> {
-    use std::os::windows::ffi::OsStrExt;
-    std::ffi::OsStr::new(value)
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect()
 }
 
 fn _get_ntfs_file_record_size(volume_handle: HANDLE) -> Result<usize, i32> {
@@ -325,7 +305,7 @@ fn get_ntfs_file_record(frn: u64, volume_handle: HANDLE) -> Result<FileRecord, i
         FileReferenceNumber: frn_l,
     };
     // todo how can I do this???
-    //const FILE_RECORD_SIZE: usize = get_ntfs_file_record_size(volume_handle).unwrap();
+    //const FILE_RECORD_SIZE: usize = _get_ntfs_file_record_size(volume_handle).unwrap();
     const FILE_RECORD_SIZE: usize = 1119;
     let mut output_buffer = [0u8; FILE_RECORD_SIZE];
     let mut bytes_read = 0u32;
@@ -807,7 +787,7 @@ fn get_ntfs_file_record(frn: u64, volume_handle: HANDLE) -> Result<FileRecord, i
                     dos_file_name
                 },
                 frn,
-                parent_frn: parents,
+                parent_links: parents,
                 real_size_bytes: real_size,
                 allocated_size_bytes: alloc_size,
                 created,
@@ -1016,7 +996,7 @@ pub fn read_mft(volume_root_guid: &str) -> Result<BTreeMap<u64, Vec<FileRecord>>
                         vec![FileRecord {
                             file_name: volume_root_guid.to_string(),
                             frn: root_file_usn.FileReferenceNumber,
-                            parent_frn: vec![],
+                            parent_links: vec![],
                             attributes: 0,
                             allocated_size_bytes: 0,
                             real_size_bytes: 0,
@@ -1093,114 +1073,6 @@ pub fn get_size(frn: u64, fs_tree: &BTreeMap<u64, Vec<FileInfo>>) -> u64 {
 }
 
 /**
-
-Assert the SE_BACKUP_NAME and SE_RESTORE_NAME privileges required to get a handle to the volume.
-
-References:
-
-- [https://docs.microsoft.com/en-us/windows/win32/secauthz/enabling-and-disabling-privileges-in-c--](https://docs.microsoft.com/en-us/windows/win32/secauthz/enabling-and-disabling-privileges-in-c--)
-
-Steps to assert privileges
-
-1. get process token to the current process
-1. create TOKEN_PRIVILEGES struct
-1. set privileges
-
-*/
-pub fn assert_security_privileges() {
-    unsafe {
-        let mut proc_token: HANDLE = ptr::null_mut();
-        // https://docs.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-openprocesstoken
-        // https://github.com/ricostrong/mesosfuzz/blob/13c599f89610008f6cbfe953c0761dd472fe67e4/libs/debugger/src/sedebug.rs#L20
-        if OpenProcessToken(
-            GetCurrentProcess(),
-            TOKEN_ADJUST_PRIVILEGES,
-            &mut proc_token,
-        ) == 0
-        {
-            println!("OpenProcessToken error {}", GetLastError());
-            println!("See https://docs.microsoft.com/en-us/windows/win32/debug/system-error-codes");
-        }
-
-        // Set privileges for the process
-        let privileges: [&str; 2] = ["SeBackupPrivilege", "SeRestorePrivilege"];
-        for i in 0..=1 {
-            let mut token_privileges: TOKEN_PRIVILEGES = std::mem::zeroed();
-
-            // https://docs.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-lookupprivilegevaluew
-            if LookupPrivilegeValueW(
-                ptr::null(),
-                to_wstring(privileges[i]).as_ptr(),
-                &mut token_privileges.Privileges[0].Luid,
-            ) == 0
-            {
-                println!("LookupPrivilegeValueW error {}", GetLastError());
-                println!(
-                    "See https://docs.microsoft.com/en-us/windows/win32/debug/system-error-codes"
-                );
-            }
-            token_privileges.PrivilegeCount = 1;
-            token_privileges.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
-
-            // https://docs.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-adjusttokenprivileges
-            if AdjustTokenPrivileges(
-                proc_token,
-                0,
-                &mut token_privileges,
-                0,
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-            ) == 0
-            {
-                let e = GetLastError();
-                println!("AdjustTokenPrivileges failed, error {}", e);
-                println!("Unable to adjust privileges. Be sure to run with elevated permissions.");
-                std::process::exit(e as i32);
-            }
-            if GetLastError() == 1300
-            // ERROR_NOT_ALL_ASSIGNED
-            {
-                println!(
-                    "\n*** Unable to adjust privileges. Try running as an administrator. ***\n"
-                );
-                std::process::exit(1300);
-            }
-        }
-        // close our process token handle
-        CloseHandle(proc_token);
-    }
-}
-
-/** get_volume_guid will get the unique volume name (GUID).
-
-Example return value:
-
-```text
-\\?\Volume{6eb8a49a-0000-0000-0000-300300000000}\
-```
-*/
-pub fn get_volume_guid(drive: &str) -> Option<String> {
-    unsafe {
-        let volume_guid = &mut [0; MAX_PATH + 1];
-        if GetVolumeNameForVolumeMountPointW(
-            to_wstring(drive).as_ptr(),
-            volume_guid.as_mut_ptr(),
-            volume_guid.len() as u32,
-        ) == 1
-        {
-            Some(String::from_utf16_lossy(
-                &volume_guid[..volume_guid
-                    .iter()
-                    .position(|v| *v == 0)
-                    .unwrap_or(volume_guid.len())],
-            ))
-        } else {
-            None
-        }
-    }
-}
-
-/**
 Gets a handle to a volume using the volume GUID. Must be run with administrator privileges.
 
 _NOTE:_ the volume guid should __not__ have a trailing slash `\`. The trailing backslash
@@ -1212,7 +1084,7 @@ Example volume GUID: `\\?\Volume{6eb8a49a-0000-0000-0000-300300000000}`
 pub fn get_file_read_handle(file: &str) -> Result<HANDLE, i32> {
     let handle = unsafe {
         CreateFileW(
-            to_wstring(file).as_ptr(),
+            str_to_wstring(file).as_ptr(),
             //GENERIC_READ,
             FILE_READ_EA,
             // opening with FILE_SHARE_READ only gives a ERROR_SHARING_VIOLATION error
