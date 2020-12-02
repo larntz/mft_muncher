@@ -178,6 +178,8 @@ impl MFT {
 
                 let mut attributes: Vec<Vec<u8>> = Vec::new();
                 let mut attribute_offset = file_record_header.attribute_offset as usize;
+
+                // loop through attributes
                 loop {
                     let attribute_header = unsafe {
                         std::mem::transmute::<
@@ -196,7 +198,7 @@ impl MFT {
                     );
 
                     if attribute_header.attribute_type == 4294967295 {
-                        // attribute list ends with type 0xFFFFFFFF
+                        // attribute list ends with 0xFFFFFFFF in the attribute type location
                         break;
                     }
                     attributes.push(

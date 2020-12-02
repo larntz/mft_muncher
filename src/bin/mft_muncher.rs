@@ -10,8 +10,10 @@ fn main() {
             println!("got struct MFT in {} ns", start.elapsed().as_nanos());
             dbg!(&mft);
 
+            let start = Instant::now();
             // do some mft stuff
             mft.get_record(1407374883553285);
+            println!("mft.get_record() in {} ns", start.elapsed().as_nanos());
         }
         Err(e) => {
             println!("ERROR: {}", e);
