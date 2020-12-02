@@ -1,3 +1,6 @@
+use crate::mft::MFT;
+use std::convert::TryInto;
+
 /**
 reference [https://flatcap.org/linux-ntfs/ntfs/attributes/file_name.html](https://flatcap.org/linux-ntfs/ntfs/attributes/file_name.html)
 
@@ -45,26 +48,123 @@ Flag 	    Description
 **/
 
 #[derive(Debug)]
-#[repr(C)]
 pub struct NtfsFileNameAttribute {
     pub parent_frn: u64,
-    file_create: u64,
-    file_modified: u64,
-    mft_modified: u64,
-    file_read: u64,
-    allocated_size: u64,
-    real_size: u64,
-    flags: u32,
-    ea_reparse: u32,
+    pub file_create: u64,
+    pub file_modified: u64,
+    pub mft_modified: u64,
+    pub file_read: u64,
+    pub allocated_size: u64,
+    pub real_size: u64,
+    pub flags: u32,
+    pub ea_reparse: u32,
     pub filename_length: u8,
     pub filename_namespace: u8,
     pub filename: String,
 }
 
 impl NtfsFileNameAttribute {
-    pub fn new(bytes: &[u8], length: u32) {
-        dbg!(bytes);
+    pub fn new(bytes: &[u8], length: u32) -> NtfsFileNameAttribute {
+        const PARENT_FRN_OFFSET: usize = 0x00;
+        const CREATE_OFFSET: usize = 0x08;
+        const MODIFIED_OFFSET: usize = 0x10;
+        const MFT_MODIFIED_OFFSET: usize = 0x18;
+        const READ_OFFSET: usize = 0x20;
+        const ALLOCATED_OFFSET: usize = 0x28;
+        const REAL_OFFSET: usize = 0x30;
+        const FLAGS_OFFSET: usize = 0x38;
+        const EA_REPARSE_OFFSET: usize = 0x3c;
+        const FILENAME_LENGTH_OFFSET: usize = 0x40;
+        const FILENAME_NAMESPACE_OFFSET: usize = 0x41;
+        const FILENAME_OFFSET: usize = 0x42;
+
+        let size = CREATE_OFFSET - PARENT_FRN_OFFSET;
+        let parent_frn = u64::from_le_bytes(
+            bytes[PARENT_FRN_OFFSET..PARENT_FRN_OFFSET + size]
+                .try_into()
+                .expect("this will never fail"),
+        );
+        let size = MODIFIED_OFFSET - CREATE_OFFSET;
+        let file_create = u64::from_le_bytes(
+            bytes[CREATE_OFFSET..CREATE_OFFSET + size]
+                .try_into()
+                .expect("this will never fail"),
+        );
+        let size = MFT_MODIFIED_OFFSET - MODIFIED_OFFSET;
+        let file_modified = u64::from_le_bytes(
+            bytes[MODIFIED_OFFSET..MODIFIED_OFFSET + size]
+                .try_into()
+                .expect("this will never fail"),
+        );
+        let size = READ_OFFSET - MFT_MODIFIED_OFFSET;
+        let mft_modified = u64::from_le_bytes(
+            bytes[MFT_MODIFIED_OFFSET..MFT_MODIFIED_OFFSET + size]
+                .try_into()
+                .expect("this will never fail"),
+        );
+        let size = ALLOCATED_OFFSET - READ_OFFSET;
+        let file_read = u64::from_le_bytes(
+            bytes[READ_OFFSET..READ_OFFSET + size]
+                .try_into()
+                .expect("this will never fail"),
+        );
+        let size = REAL_OFFSET - ALLOCATED_OFFSET;
+        let allocated_size = u64::from_le_bytes(
+            bytes[ALLOCATED_OFFSET..ALLOCATED_OFFSET + size]
+                .try_into()
+                .expect("this will never fail"),
+        );
+        let size = FLAGS_OFFSET - REAL_OFFSET;
+        let real_size = u64::from_le_bytes(
+            bytes[REAL_OFFSET..REAL_OFFSET + size]
+                .try_into()
+                .expect("this will never fail"),
+        );
+        let size = EA_REPARSE_OFFSET - FLAGS_OFFSET;
+        let flags = u32::from_le_bytes(
+            bytes[FLAGS_OFFSET..FLAGS_OFFSET + size]
+                .try_into()
+                .expect("this will never fail"),
+        );
+        let size = FILENAME_LENGTH_OFFSET - EA_REPARSE_OFFSET;
+        let ea_reparse = u32::from_le_bytes(
+            bytes[EA_REPARSE_OFFSET..EA_REPARSE_OFFSET + size]
+                .try_into()
+                .expect("this will never fail"),
+        );
+        let size = FILENAME_NAMESPACE_OFFSET - FILENAME_LENGTH_OFFSET;
+        let filename_length = u8::from_le_bytes(
+            bytes[FILENAME_LENGTH_OFFSET..FILENAME_LENGTH_OFFSET + size]
+                .try_into()
+                .expect("this will never fail"),
+        );
+        let size = FILENAME_OFFSET - FILENAME_NAMESPACE_OFFSET;
+        let filename_namespace = u8::from_le_bytes(
+            bytes[FILENAME_NAMESPACE_OFFSET..FILENAME_NAMESPACE_OFFSET + size]
+                .try_into()
+                .expect("this will never fail"),
+        );
+
+        let filename_u16: Vec<u16> = bytes
+            [FILENAME_OFFSET..FILENAME_OFFSET + (2 * filename_length) as usize]
+            .chunks_exact(2)
+            .map(|x| u16::from_le_bytes(x.try_into().expect("uh, what happened?")))
+            .collect();
+        let filename = String::from_utf16_lossy(&filename_u16);
+
+        NtfsFileNameAttribute {
+            parent_frn,
+            file_create,
+            file_modified,
+            mft_modified,
+            file_read,
+            allocated_size,
+            real_size,
+            flags,
+            ea_reparse,
+            filename_length,
+            filename_namespace,
+            filename,
+        }
     }
 }
-
-// pub const NTFS_FILE_NAME_ATTRIBUTE_LENGTH: usize = std::mem::size_of::<NtfsFileNameAttribute>();

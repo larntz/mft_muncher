@@ -9,7 +9,6 @@ use crate::str_to_wstring;
 extern crate winapi;
 
 use chrono::prelude::*;
-use encoding_rs::*;
 use std::collections::BTreeMap;
 use std::convert::TryInto;
 use std::mem;

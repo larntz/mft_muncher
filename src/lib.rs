@@ -8,9 +8,10 @@ mod ntfs_attributes;
 pub mod mft;
 
 mod usn_record;
-/// This module wraps unsafe function calls to winapi-rs. This is the only module
-/// with unsafe code.
-pub mod winapi_ffi;
+
+// /// This module wraps unsafe function calls to winapi-rs. This is the only module
+// /// with unsafe code.
+// pub mod winapi_ffi;
 
 /// Converts a &str to a wide OsStr (utf16)
 fn str_to_wstring(value: &str) -> Vec<u16> {

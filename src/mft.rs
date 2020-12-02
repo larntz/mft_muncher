@@ -234,7 +234,7 @@ impl MFT {
                             println!("\n\n-------------------\n");
                             dbg!(&attribute_header);
                             assert_eq!(0, attribute_header.non_resident_flag);
-                            NtfsFileNameAttribute::new(
+                            let filename_attribute = NtfsFileNameAttribute::new(
                                 &file_record[attribute_offset
                                     + attribute_header.attribute_offset as usize
                                     ..attribute_offset
@@ -242,6 +242,7 @@ impl MFT {
                                         + attribute_header.attribute_length as usize],
                                 attribute_header.attribute_length,
                             );
+                            dbg!(&filename_attribute);
                             println!("\n\n-------------------\n");
                         }
                         0x80 => {
