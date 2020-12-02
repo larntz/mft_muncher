@@ -1,7 +1,10 @@
 #[allow(unused_imports)]
-use crate::file_record::{
-    FileRecord, NtfsAttributeCommonHeader, NtfsFileRecordHeader,
-    NTFS_ATTRIBUTE_COMMON_HEADER_LENGTH, NTFS_FILE_RECORD_HEADER_LENGTH,
+use crate::file_record::{FileRecord, NtfsFileRecordHeader, NTFS_FILE_RECORD_HEADER_LENGTH};
+use crate::ntfs_attributes::{
+    ntfs_file_name::NtfsFileNameAttribute,
+    ntfs_standard_information::NtfsStandardInformationAttribute,
+    ntfs_standard_information::NTFS_STANDARD_INFORMATION_ATTRIBUTE_LENGTH,
+    NtfsResidentAttributeCommonHeader, NTFS_RESIDENT_ATTRIBUTE_COMMON_HEADER_LENGTH,
 };
 use crate::str_to_wstring;
 use crate::usn_record::{USN_RECORD, USN_RECORD_LENGTH};
@@ -183,24 +186,76 @@ impl MFT {
                 loop {
                     let attribute_header = unsafe {
                         std::mem::transmute::<
-                            [u8; NTFS_ATTRIBUTE_COMMON_HEADER_LENGTH],
-                            NtfsAttributeCommonHeader,
+                            [u8; NTFS_RESIDENT_ATTRIBUTE_COMMON_HEADER_LENGTH],
+                            NtfsResidentAttributeCommonHeader,
                         >(
                             file_record[attribute_offset
-                                ..attribute_offset + NTFS_ATTRIBUTE_COMMON_HEADER_LENGTH]
+                                ..attribute_offset + NTFS_RESIDENT_ATTRIBUTE_COMMON_HEADER_LENGTH]
                                 .try_into()
                                 .expect("danger will robinson!"),
                         )
                     };
-                    println!(
-                        "\n*** Found attribute type {:#x} ***\n",
-                        attribute_header.attribute_type
-                    );
 
-                    if attribute_header.attribute_type == 4294967295 {
-                        // attribute list ends with 0xFFFFFFFF in the attribute type location
-                        break;
+                    match attribute_header.attribute_type {
+                        0xffffffff => {
+                            // attribute list ends with 0xFFFFFFFF in the attribute type location
+                            break;
+                        }
+                        0x10 => {
+                            // standard_information attribute
+                            // expected to always be resident.
+                            println!("\n\n-------------------\n");
+                            dbg!(&attribute_header);
+                            assert_eq!(0, attribute_header.non_resident_flag);
+                            let standard_attribute = unsafe {
+                                std::mem::transmute::<
+                                    [u8; NTFS_STANDARD_INFORMATION_ATTRIBUTE_LENGTH],
+                                    NtfsStandardInformationAttribute,
+                                >(
+                                    file_record[attribute_offset
+                                        + attribute_header.attribute_offset as usize
+                                        ..attribute_offset
+                                            + attribute_header.attribute_offset as usize
+                                            + NTFS_STANDARD_INFORMATION_ATTRIBUTE_LENGTH]
+                                        .try_into()
+                                        .expect("safety first!"),
+                                )
+                            };
+                            dbg!(&standard_attribute);
+                            println!("\n\n-------------------\n");
+                        }
+                        0x20 => {
+                            // attribute_list attribute
+                            println!("ATTRIBUTE_LIST")
+                        }
+                        0x30 => {
+                            // file_name attribute
+                            // expected to always be resident.
+                            println!("\n\n-------------------\n");
+                            dbg!(&attribute_header);
+                            assert_eq!(0, attribute_header.non_resident_flag);
+                            NtfsFileNameAttribute::new(
+                                &file_record[attribute_offset
+                                    + attribute_header.attribute_offset as usize
+                                    ..attribute_offset
+                                        + attribute_header.attribute_offset as usize
+                                        + attribute_header.attribute_length as usize],
+                                attribute_header.attribute_length,
+                            );
+                            println!("\n\n-------------------\n");
+                        }
+                        0x80 => {
+                            // data attribute
+                            println!("DATA");
+                        }
+                        _ => {
+                            println!(
+                                "\n*** ignoring unmatched attribute type {:#x} {} ***\n",
+                                attribute_header.attribute_type, attribute_header.attribute_type,
+                            );
+                        }
                     }
+
                     attributes.push(
                         file_record[attribute_offset
                             ..attribute_offset + attribute_header.length_with_header as usize]

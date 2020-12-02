@@ -13,6 +13,8 @@ fn main() {
             let start = Instant::now();
             // do some mft stuff
             mft.get_record(1407374883553285);
+            mft.get_record(61080069946295717);
+            mft.get_record(15762598695893097);
             println!("mft.get_record() in {} ns", start.elapsed().as_nanos());
         }
         Err(e) => {
