@@ -3,12 +3,13 @@ use crate::file_record::{FileRecord, NtfsFileRecordHeader, NTFS_FILE_RECORD_HEAD
 use crate::ntfs_attributes::{
     ntfs_file_name::NtfsFileNameAttribute,
     ntfs_standard_information::NtfsStandardInformationAttribute,
-    ntfs_standard_information::NTFS_STANDARD_INFORMATION_ATTRIBUTE_LENGTH,
-    NtfsResidentAttributeCommonHeader, NTFS_RESIDENT_ATTRIBUTE_COMMON_HEADER_LENGTH,
+    ntfs_standard_information::NTFS_STANDARD_INFORMATION_ATTRIBUTE_LENGTH, NtfsAttributeHeader,
+    NtfsAttributeUnion::*, NTFS_RESIDENT_ATTRIBUTE_COMMON_HEADER_LENGTH,
 };
-use crate::str_to_wstring;
 use crate::usn_record::{USN_RECORD, USN_RECORD_LENGTH};
+use crate::utils::str_to_wstring;
 
+use crate::file_record::NtfsFileRecord;
 use std::collections::BTreeMap;
 use std::convert::TryInto;
 use std::io::Error;
@@ -154,114 +155,137 @@ impl MFT {
                 // https://flatcap.org/linux-ntfs/ntfs/concepts/attribute_header.html
                 //
 
-                let output = unsafe {
-                    std::mem::transmute::<[u8; 16], NTFS_FILE_RECORD_OUTPUT_BUFFER>(
-                        output_buffer[..16].try_into().expect("shit"),
-                    )
-                };
+                // let output = unsafe {
+                //     std::mem::transmute::<[u8; 16], NTFS_FILE_RECORD_OUTPUT_BUFFER>(
+                //         output_buffer[..16].try_into().expect("shit"),
+                //     )
+                // };
 
                 // todo why don't these match? Should they? What gives, man?
                 // dbg!(unsafe { frn.QuadPart() });
                 // dbg!(unsafe { *output.FileReferenceNumber.QuadPart() });
                 // dbg!(output.FileRecordLength);
 
-                let file_record: Vec<u8> = output_buffer
-                    [12..(output.FileRecordLength as usize + 12)]
-                    .try_into()
-                    .expect("you should handle this");
+                // let file_record_bytes: Vec<u8> = output_buffer
+                //     [12..(output.FileRecordLength as usize + 12)]
+                //     .try_into()
+                //     .expect("you should handle this");
 
-                let file_record_header = unsafe {
-                    std::mem::transmute::<[u8; NTFS_FILE_RECORD_HEADER_LENGTH], NtfsFileRecordHeader>(
-                        file_record[..NTFS_FILE_RECORD_HEADER_LENGTH]
-                            .try_into()
-                            .expect("you should handle this"),
-                    )
-                };
-                dbg!(&file_record_header);
+                // let file_record_header = unsafe {
+                //     std::mem::transmute::<[u8; NTFS_FILE_RECORD_HEADER_LENGTH], NtfsFileRecordHeader>(
+                //         file_record[..NTFS_FILE_RECORD_HEADER_LENGTH]
+                //             .try_into()
+                //             .expect("you should handle this"),
+                //     )
+                // };
 
-                let mut attributes: Vec<Vec<u8>> = Vec::new();
-                let mut attribute_offset = file_record_header.attribute_offset as usize;
+                let file_record = NtfsFileRecord::new(&output_buffer[12..])?;
+                dbg!(&file_record);
 
+                // let mut attributes: Vec<Vec<u8>> = Vec::new();
+                // let mut attribute_offset = file_record.header.attribute_offset as usize;
+
+                /*
                 // loop through attributes
                 loop {
-                    let attribute_header = unsafe {
-                        std::mem::transmute::<
-                            [u8; NTFS_RESIDENT_ATTRIBUTE_COMMON_HEADER_LENGTH],
-                            NtfsResidentAttributeCommonHeader,
-                        >(
-                            file_record[attribute_offset
-                                ..attribute_offset + NTFS_RESIDENT_ATTRIBUTE_COMMON_HEADER_LENGTH]
-                                .try_into()
-                                .expect("danger will robinson!"),
-                        )
-                    };
+                    let attribute_header =
+                        NtfsAttributeHeader::new(&file_record[attribute_offset..])
+                            .expect("todo: fix this someday");
 
-                    match attribute_header.attribute_type {
-                        0xffffffff => {
-                            // attribute list ends with 0xFFFFFFFF in the attribute type location
-                            break;
-                        }
-                        0x10 => {
-                            // standard_information attribute
-                            // expected to always be resident.
-                            println!("\n\n-------------------\n");
-                            dbg!(&attribute_header);
-                            assert_eq!(0, attribute_header.non_resident_flag);
-                            let standard_attribute = NtfsStandardInformationAttribute::new(
-                                &file_record[attribute_offset
-                                    + attribute_header.attribute_offset as usize
-                                    ..attribute_offset
-                                        + attribute_header.attribute_offset as usize
-                                        + NTFS_STANDARD_INFORMATION_ATTRIBUTE_LENGTH],
-                            );
-                            dbg!(&standard_attribute);
-                            println!("\n\n-------------------\n");
-                        }
-                        0x20 => {
-                            // attribute_list attribute
-                            println!("ATTRIBUTE_LIST")
-                        }
-                        0x30 => {
-                            // file_name attribute
-                            // expected to always be resident.
-                            println!("\n\n-------------------\n");
-                            dbg!(&attribute_header);
-                            assert_eq!(0, attribute_header.non_resident_flag);
-                            let filename_attribute = NtfsFileNameAttribute::new(
-                                &file_record[attribute_offset
-                                    + attribute_header.attribute_offset as usize
-                                    ..attribute_offset
-                                        + attribute_header.attribute_offset as usize
-                                        + attribute_header.attribute_length as usize],
-                            );
-                            dbg!(&filename_attribute);
-                            println!("\n\n-------------------\n");
-                        }
-                        0x80 => {
-                            // data attribute
-                            println!("DATA");
-                        }
-                        _ => {
-                            println!(
-                                "\n*** ignoring unmatched attribute type {:#x} {} ***\n",
-                                attribute_header.attribute_type, attribute_header.attribute_type,
-                            );
-                        }
+                    if attribute_header.attribute_type == 0xffffffff {
+                        break;
+                    } else {
+                        dbg!(&attribute_header);
                     }
+                    // suck out the union_data
+                    // match attribute_header.union_data {
+                    //     Resident(data) => {
+                    //         dbg!(data);
+                    //     }
+                    //     NonResident(data) => {
+                    //         dbg!(data);
+                    //     }
+                    // }
 
-                    attributes.push(
-                        file_record[attribute_offset
-                            ..attribute_offset + attribute_header.length_with_header as usize]
-                            .try_into()
-                            .expect("what am I doing"),
-                    );
+                    // let attribute_header = unsafe {
+                    //     std::mem::transmute::<
+                    //         [u8; NTFS_RESIDENT_ATTRIBUTE_COMMON_HEADER_LENGTH],
+                    //         NtfsAttributeHeader,
+                    //     >(
+                    //         file_record[attribute_offset
+                    //             ..attribute_offset + NTFS_RESIDENT_ATTRIBUTE_COMMON_HEADER_LENGTH]
+                    //             .try_into()
+                    //             .expect("danger will robinson!"),
+                    //     )
+                    // };
 
-                    attribute_offset += attribute_header.length_with_header as usize;
+                    // match attribute_header.attribute_type {
+                    //     0xffffffff => {
+                    //         // attribute list ends with 0xFFFFFFFF in the attribute type location
+                    //         break;
+                    //     }
+                    //     0x10 => {
+                    //         // standard_information attribute
+                    //         // expected to always be resident.
+                    //         println!("\n\n-------------------\n");
+                    //         dbg!(&attribute_header);
+                    //         assert_eq!(0, attribute_header.non_resident_flag);
+                    //         let standard_attribute = NtfsStandardInformationAttribute::new(
+                    //             &file_record[attribute_offset
+                    //                 + attribute_header.attribute_offset as usize
+                    //                 ..attribute_offset
+                    //                     + attribute_header.attribute_offset as usize
+                    //                     + NTFS_STANDARD_INFORMATION_ATTRIBUTE_LENGTH],
+                    //         );
+                    //         dbg!(&standard_attribute);
+                    //         println!("\n\n-------------------\n");
+                    //     }
+                    //     0x20 => {
+                    //         // attribute_list attribute
+                    //         println!("ATTRIBUTE_LIST")
+                    //     }
+                    //     0x30 => {
+                    //         // file_name attribute
+                    //         // expected to always be resident.
+                    //         println!("\n\n-------------------\n");
+                    //         dbg!(&attribute_header);
+                    //         assert_eq!(0, attribute_header.non_resident_flag);
+                    //         let filename_attribute = NtfsFileNameAttribute::new(
+                    //             &file_record[attribute_offset
+                    //                 + attribute_header.attribute_offset as usize
+                    //                 ..attribute_offset
+                    //                     + attribute_header.attribute_offset as usize
+                    //                     + attribute_header.attribute_length as usize],
+                    //         );
+                    //         dbg!(&filename_attribute);
+                    //         println!("\n\n-------------------\n");
+                    //     }
+                    //     0x80 => {
+                    //         // data attribute
+                    //         println!("DATA");
+                    //     }
+                    //     _ => {
+                    //         println!(
+                    //             "\n*** ignoring unmatched attribute type {:#x} {} ***\n",
+                    //             attribute_header.attribute_type, attribute_header.attribute_type,
+                    //         );
+                    //     }
+                    // }
+
+                    // attributes.push(
+                    //     file_record[attribute_offset
+                    //         ..attribute_offset + attribute_header.record_length as usize]
+                    //         .try_into()
+                    //         .expect("what am I doing"),
+                    // );
+
+                    attribute_offset += attribute_header.record_length as usize;
                 }
+                */
 
                 // todo parse attributes in a nice way...
-                dbg!(attributes.len());
-                println!("\n\n\n");
+                // dbg!(attributes.len());
+                // println!("\n\n\n");
 
                 Ok(FileRecord::default())
             }

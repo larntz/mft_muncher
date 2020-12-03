@@ -1,4 +1,3 @@
-use crate::mft::MFT;
 use std::convert::TryInto;
 
 /**

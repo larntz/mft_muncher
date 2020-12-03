@@ -2,9 +2,13 @@
 
 Note: this project aims to be NTFSv3 compatible (2003/xp and newer)
 
+(A) 12-3-2020 check version of ntfs volume before doing anything!! 
+    * must be version 3.0 or 3.1
+
 ## lib.rs
-(A) 12-1-2020 add function to convert bytes into UTF16_LE so we can ditch the encoding_rs library
+x (A) 12-1-2020 add function to convert bytes into UTF16_LE so we can ditch the encoding_rs library
     * it's only used in one place, and I'd like to understand how to do it myself anyway. 
+    * did this inline in ntfs_file_name.rs. Not sure I'll need it elsewhere.
 
 ## structs
 
