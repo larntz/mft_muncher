@@ -207,20 +207,13 @@ impl MFT {
                             println!("\n\n-------------------\n");
                             dbg!(&attribute_header);
                             assert_eq!(0, attribute_header.non_resident_flag);
-                            let standard_attribute = unsafe {
-                                std::mem::transmute::<
-                                    [u8; NTFS_STANDARD_INFORMATION_ATTRIBUTE_LENGTH],
-                                    NtfsStandardInformationAttribute,
-                                >(
-                                    file_record[attribute_offset
+                            let standard_attribute = NtfsStandardInformationAttribute::new(
+                                &file_record[attribute_offset
+                                    + attribute_header.attribute_offset as usize
+                                    ..attribute_offset
                                         + attribute_header.attribute_offset as usize
-                                        ..attribute_offset
-                                            + attribute_header.attribute_offset as usize
-                                            + NTFS_STANDARD_INFORMATION_ATTRIBUTE_LENGTH]
-                                        .try_into()
-                                        .expect("safety first!"),
-                                )
-                            };
+                                        + NTFS_STANDARD_INFORMATION_ATTRIBUTE_LENGTH],
+                            );
                             dbg!(&standard_attribute);
                             println!("\n\n-------------------\n");
                         }
@@ -240,7 +233,6 @@ impl MFT {
                                     ..attribute_offset
                                         + attribute_header.attribute_offset as usize
                                         + attribute_header.attribute_length as usize],
-                                attribute_header.attribute_length,
                             );
                             dbg!(&filename_attribute);
                             println!("\n\n-------------------\n");

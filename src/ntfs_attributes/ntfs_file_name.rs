@@ -62,9 +62,9 @@ pub struct NtfsFileNameAttribute {
     pub filename_namespace: u8,
     pub filename: String,
 }
-
+const NTFS_FILE_NAME_ATTRIBUTE: usize = std::mem::size_of::<NtfsFileNameAttribute>();
 impl NtfsFileNameAttribute {
-    pub fn new(bytes: &[u8], length: u32) -> NtfsFileNameAttribute {
+    pub fn new(bytes: &[u8]) -> Result<NtfsFileNameAttribute, std::io::Error> {
         const PARENT_FRN_OFFSET: usize = 0x00;
         const CREATE_OFFSET: usize = 0x08;
         const MODIFIED_OFFSET: usize = 0x10;
@@ -78,81 +78,93 @@ impl NtfsFileNameAttribute {
         const FILENAME_NAMESPACE_OFFSET: usize = 0x41;
         const FILENAME_OFFSET: usize = 0x42;
 
+        if bytes.len() < FILENAME_OFFSET {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "we got 99 problems and this slice is one",
+            ));
+        }
+
         let size = CREATE_OFFSET - PARENT_FRN_OFFSET;
         let parent_frn = u64::from_le_bytes(
             bytes[PARENT_FRN_OFFSET..PARENT_FRN_OFFSET + size]
                 .try_into()
-                .expect("this will never fail"),
+                .expect("promise me you'll never die"),
         );
         let size = MODIFIED_OFFSET - CREATE_OFFSET;
         let file_create = u64::from_le_bytes(
             bytes[CREATE_OFFSET..CREATE_OFFSET + size]
                 .try_into()
-                .expect("this will never fail"),
+                .expect("promise me you'll never die"),
         );
         let size = MFT_MODIFIED_OFFSET - MODIFIED_OFFSET;
         let file_modified = u64::from_le_bytes(
             bytes[MODIFIED_OFFSET..MODIFIED_OFFSET + size]
                 .try_into()
-                .expect("this will never fail"),
+                .expect("promise me you'll never die"),
         );
         let size = READ_OFFSET - MFT_MODIFIED_OFFSET;
         let mft_modified = u64::from_le_bytes(
             bytes[MFT_MODIFIED_OFFSET..MFT_MODIFIED_OFFSET + size]
                 .try_into()
-                .expect("this will never fail"),
+                .expect("promise me you'll never die"),
         );
         let size = ALLOCATED_OFFSET - READ_OFFSET;
         let file_read = u64::from_le_bytes(
             bytes[READ_OFFSET..READ_OFFSET + size]
                 .try_into()
-                .expect("this will never fail"),
+                .expect("promise me you'll never die"),
         );
         let size = REAL_OFFSET - ALLOCATED_OFFSET;
         let allocated_size = u64::from_le_bytes(
             bytes[ALLOCATED_OFFSET..ALLOCATED_OFFSET + size]
                 .try_into()
-                .expect("this will never fail"),
+                .expect("promise me you'll never die"),
         );
         let size = FLAGS_OFFSET - REAL_OFFSET;
         let real_size = u64::from_le_bytes(
             bytes[REAL_OFFSET..REAL_OFFSET + size]
                 .try_into()
-                .expect("this will never fail"),
+                .expect("promise me you'll never die"),
         );
         let size = EA_REPARSE_OFFSET - FLAGS_OFFSET;
         let flags = u32::from_le_bytes(
             bytes[FLAGS_OFFSET..FLAGS_OFFSET + size]
                 .try_into()
-                .expect("this will never fail"),
+                .expect("promise me you'll never die"),
         );
         let size = FILENAME_LENGTH_OFFSET - EA_REPARSE_OFFSET;
         let ea_reparse = u32::from_le_bytes(
             bytes[EA_REPARSE_OFFSET..EA_REPARSE_OFFSET + size]
                 .try_into()
-                .expect("this will never fail"),
+                .expect("promise me you'll never die"),
         );
         let size = FILENAME_NAMESPACE_OFFSET - FILENAME_LENGTH_OFFSET;
         let filename_length = u8::from_le_bytes(
             bytes[FILENAME_LENGTH_OFFSET..FILENAME_LENGTH_OFFSET + size]
                 .try_into()
-                .expect("this will never fail"),
+                .expect("promise me you'll never die"),
         );
         let size = FILENAME_OFFSET - FILENAME_NAMESPACE_OFFSET;
         let filename_namespace = u8::from_le_bytes(
             bytes[FILENAME_NAMESPACE_OFFSET..FILENAME_NAMESPACE_OFFSET + size]
                 .try_into()
-                .expect("this will never fail"),
+                .expect("promise me you'll never die"),
         );
 
         let filename_u16: Vec<u16> = bytes
             [FILENAME_OFFSET..FILENAME_OFFSET + (2 * filename_length) as usize]
             .chunks_exact(2)
-            .map(|x| u16::from_le_bytes(x.try_into().expect("uh, what happened?")))
+            .map(|x| {
+                u16::from_le_bytes(
+                    x.try_into()
+                        .expect("This is cool. Uh huh huh... Ow. Cut it out, butt-hole."),
+                )
+            })
             .collect();
         let filename = String::from_utf16_lossy(&filename_u16);
 
-        NtfsFileNameAttribute {
+        Ok(NtfsFileNameAttribute {
             parent_frn,
             file_create,
             file_modified,
@@ -165,6 +177,6 @@ impl NtfsFileNameAttribute {
             filename_length,
             filename_namespace,
             filename,
-        }
+        })
     }
 }

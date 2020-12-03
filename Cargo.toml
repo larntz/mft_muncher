@@ -9,4 +9,3 @@ edition = "2018"
 [dependencies]
 winapi = { version = "0.3", features = ["winerror","timezoneapi","ioapiset","winioctl","winuser", "fileapi", "winnt", "handleapi", "errhandlingapi", "securitybaseapi", "processthreadsapi", "winbase"] }
 chrono = "0.4"
-# encoding_rs = "0.8"

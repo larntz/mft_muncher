@@ -1,3 +1,4 @@
+use std::convert::TryInto;
 /**
 reference: [https://flatcap.org/linux-ntfs/ntfs/attributes/standard_information.html](https://flatcap.org/linux-ntfs/ntfs/attributes/standard_information.html)
 
@@ -55,6 +56,23 @@ pub struct NtfsStandardInformationAttribute {
     pub security_id: u32,
     pub quota_charged: u64,
     pub usn: u64,
+}
+
+impl NtfsStandardInformationAttribute {
+    pub fn new(bytes: &[u8]) -> Result<NtfsStandardInformationAttribute, std::io::Error> {
+        if bytes.len() != NTFS_STANDARD_INFORMATION_ATTRIBUTE_LENGTH {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "we got 99 problems and this slice is one",
+            ));
+        }
+        Ok(unsafe {
+            std::mem::transmute::<
+                [u8; NTFS_STANDARD_INFORMATION_ATTRIBUTE_LENGTH],
+                NtfsStandardInformationAttribute,
+            >(bytes.try_into().expect("my dad already paid the caterer"))
+        })
+    }
 }
 
 pub const NTFS_STANDARD_INFORMATION_ATTRIBUTE_LENGTH: usize =
