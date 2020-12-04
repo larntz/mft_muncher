@@ -198,7 +198,6 @@ impl NtfsAttribute {
                     let metadata = NtfsAttributeType::StandardInformation(
                         NtfsStandardInformationAttribute::new(&bytes[v.value_offset as usize..])?,
                     );
-
                     return Ok(Some(NtfsAttribute { header, metadata }));
                 }
                 NtfsAttributeUnion::NonResident(v) => {
@@ -216,7 +215,13 @@ impl NtfsAttribute {
                     panic!("file_name attributes should never be non-resident");
                 }
             },
-            _ => return Ok(None),
+            _ => {
+                println!(
+                    "+-+-+-+ unprocessed attribute type {:#x} +-+-+-+ \n{:#?}",
+                    &header.attribute_type, &header
+                );
+                return Ok(None);
+            }
         }
     }
 }
