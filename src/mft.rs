@@ -1,10 +1,6 @@
 #[allow(unused_imports)]
 use crate::file_record::{FileRecord, NtfsFileRecordHeader};
-use crate::ntfs_attributes::{
-    ntfs_file_name::NtfsFileNameAttribute,
-    ntfs_standard_information::NtfsStandardInformationAttribute, NtfsAttributeHeader,
-    NtfsAttributeUnion::*,
-};
+use crate::ntfs_volume_data::NtfsVolumeData;
 use crate::usn_record::{USN_RECORD, USN_RECORD_LENGTH};
 use crate::utils::str_to_wstring;
 
@@ -13,36 +9,22 @@ use std::collections::BTreeMap;
 use std::convert::TryInto;
 use std::io::Error;
 use std::ptr;
-use winapi::shared::minwindef::{DWORD, FILETIME, LPDWORD, LPVOID, MAX_PATH, WORD};
-use winapi::um::fileapi::{
-    CreateFileW, GetVolumeNameForVolumeMountPointW, BY_HANDLE_FILE_INFORMATION, OPEN_EXISTING,
-};
+use winapi::shared::minwindef::{DWORD, LPDWORD, LPVOID, MAX_PATH};
+use winapi::shared::winerror::ERROR_HANDLE_EOF;
+use winapi::um::fileapi::{CreateFileW, GetVolumeNameForVolumeMountPointW, OPEN_EXISTING};
 use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
 use winapi::um::ioapiset::DeviceIoControl;
 use winapi::um::processthreadsapi::{GetCurrentProcess, OpenProcessToken};
 use winapi::um::securitybaseapi::AdjustTokenPrivileges;
-use winapi::um::winbase::{
-    FILE_ID_DESCRIPTOR_u, LookupPrivilegeValueW, OpenFileById, FILE_FLAG_BACKUP_SEMANTICS,
-    FILE_ID_DESCRIPTOR,
-};
+use winapi::um::winbase::{LookupPrivilegeValueW, FILE_FLAG_BACKUP_SEMANTICS};
 use winapi::um::winioctl::{
     FSCTL_ENUM_USN_DATA, FSCTL_GET_NTFS_FILE_RECORD, FSCTL_GET_NTFS_VOLUME_DATA,
-    FSCTL_READ_FILE_USN_DATA, NTFS_FILE_RECORD_INPUT_BUFFER, NTFS_FILE_RECORD_OUTPUT_BUFFER,
-    NTFS_VOLUME_DATA_BUFFER,
+    FSCTL_READ_FILE_USN_DATA, NTFS_EXTENDED_VOLUME_DATA, NTFS_FILE_RECORD_INPUT_BUFFER,
+    NTFS_FILE_RECORD_OUTPUT_BUFFER, NTFS_VOLUME_DATA_BUFFER,
 };
 use winapi::um::winnt::{DWORDLONG, HANDLE, LARGE_INTEGER, TOKEN_PRIVILEGES, USN};
 use winapi::um::winnt::{
-    //FILE_ATTRIBUTE_ARCHIVE,
-    FILE_ATTRIBUTE_DIRECTORY,
-    FILE_READ_ATTRIBUTES,
-    FILE_READ_EA,
-    //FILE_ATTRIBUTE_NORMAL,
-    //FILE_ATTRIBUTE_READONLY,
-    FILE_SHARE_DELETE,
-    FILE_SHARE_READ,
-    FILE_SHARE_WRITE,
-    // GENERIC_READ,
-    SE_PRIVILEGE_ENABLED,
+    FILE_READ_EA, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, SE_PRIVILEGE_ENABLED,
     TOKEN_ADJUST_PRIVILEGES,
 };
 
@@ -67,21 +49,16 @@ impl MFT {
         match MFT::assert_security_privileges() {
             Ok(_) => {
                 if let Some(r_guid) = MFT::get_volume_guid(label) {
-                    if let Ok(root_usn) = MFT::get_file_usn(&r_guid) {
-                        let mut v_guid = r_guid.clone().to_string();
-                        v_guid.truncate(v_guid.len() - 1);
-                        if let Ok(handle) = MFT::get_file_read_handle(&v_guid) {
-                            return Ok(MFT {
-                                root_dir_frn: root_usn.FileReferenceNumber,
-                                volume_handle: handle,
-                                file_records: BTreeMap::<u64, Vec<FileRecord>>::new(),
-                            });
-                        }
-                    } else {
-                        return Err(Error::last_os_error());
-                    }
-                } else {
-                    return Err(Error::last_os_error());
+                    let root_usn = MFT::get_file_usn(&r_guid)?;
+                    let mut v_guid = r_guid.clone().to_string();
+                    v_guid.truncate(v_guid.len() - 1);
+                    let handle = MFT::get_file_read_handle(&v_guid)?;
+                    let volume_data = MFT::get_ntfs_volume_data(handle);
+                    return Ok(MFT {
+                        root_dir_frn: root_usn.FileReferenceNumber,
+                        volume_handle: handle,
+                        file_records: BTreeMap::<u64, Vec<FileRecord>>::new(),
+                    });
                 }
             }
             Err(e) => {
@@ -94,15 +71,10 @@ impl MFT {
         ))
     }
 
-    pub fn get_record(&self, frn: u64) {
-        match self.get_ntfs_file_record(frn) {
-            Ok(record) => {
-                //dbg!(record);
-            }
-            Err(e) => {
-                unimplemented!()
-            }
-        }
+    pub fn get_record(&self, frn: u64) -> Result<NtfsFileRecord, std::io::Error> {
+        // may want to create two sets of functions.  one that returns the all parts
+        // of the ntfs records and another that returns the abbreviated ntfs record.
+        self.get_ntfs_file_record(frn)
     }
     pub fn get_all_ntfs_file_records(
         &self,
@@ -116,7 +88,7 @@ impl MFT {
                     records.insert(frn, rec);
                 }
             }
-            Err(e) => unimplemented!(),
+            Err(e) => return Err(e),
         }
         Ok(records)
     }
@@ -196,7 +168,7 @@ impl MFT {
                 ) == 0
                 {
                     let last_error = std::io::Error::last_os_error();
-                    match last_error.raw_os_error().unwrap() {
+                    match last_error.raw_os_error().unwrap() as u32 {
                         ERROR_HANDLE_EOF => {
                             mft_eof = true;
                             continue;
@@ -255,6 +227,56 @@ impl MFT {
 
                 Ok(usn_record)
             }
+        }
+    }
+
+    /**
+    This will ge the extended ntfs volume data so we can get the version info along with
+    `BytesPerFileRecordSegment`.
+
+    To get this extended information we pass a buffer that is the size of NTFS_VOLUME_DATA_BUFFER +
+    NTFS_EXTENDED_VOLUME_DATA to DeviceIoControl() with the control code FSCTL_GET_NTFS_VOLUME_DATA.
+
+    See [MS documentation](https://docs.microsoft.com/en-us/windows/win32/api/winioctl/ns-winioctl-ntfs_extended_volume_data)
+    for additional details.
+
+    `BytesPerFileRecordSegment` is used to determine the buffer size for the control code `FSCTL_GET_NTFS_FILE_RECORD`.
+    See [MS documentation](https://docs.microsoft.com/en-us/windows/win32/api/winioctl/ni-winioctl-fsctl_get_ntfs_file_record)
+    for information about how to calculate the buffer size for FSCTL_GET_NTFS_FILE_RECORD
+
+    TODO: I would like to find a way to use this as a constant, but I won't know it at compile time. Maybe I can calculate this value for various NTFS configurations. Right now I assume a 1K File record + NTFS_VOLUME_DATA_BUFFER = 1119
+
+    Basically it is:
+
+    ```rust
+    let buffer_size = std::mem::size_of::<NTFS_VOLUME_DATA_BUFFER>()
+        + (volume_data.BytesPerFileRecordSegment as usize) + 1;
+    ```
+    **/
+
+    fn get_ntfs_volume_data(volume_handle: HANDLE) -> Result<NtfsVolumeData, std::io::Error> {
+        const BUFFER_SIZE: usize = std::mem::size_of::<NTFS_VOLUME_DATA_BUFFER>()
+            + std::mem::size_of::<NTFS_EXTENDED_VOLUME_DATA>();
+        let mut output_buffer = [0u8; BUFFER_SIZE];
+        let mut bytes_read = 0u32;
+
+        match unsafe {
+            DeviceIoControl(
+                volume_handle,
+                FSCTL_GET_NTFS_VOLUME_DATA,
+                ptr::null_mut(),
+                0,
+                output_buffer.as_mut_ptr() as *mut NTFS_VOLUME_DATA_BUFFER as LPVOID,
+                output_buffer.len() as DWORD,
+                &mut bytes_read,
+                ptr::null_mut(),
+            )
+        } {
+            0 => {
+                /* error */
+                return Err(std::io::Error::last_os_error());
+            }
+            _ => NtfsVolumeData::new(&output_buffer, true),
         }
     }
 

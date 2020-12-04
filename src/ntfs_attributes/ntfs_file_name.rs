@@ -75,7 +75,7 @@ impl NtfsFileNameAttribute {
         let filename_length = u8::from_le_bytes(get_bytes_1(&bytes[0x40..])?);
         let filename_namespace = u8::from_le_bytes(get_bytes_1(&bytes[0x41..])?);
 
-        let filename_u16: Vec<u16> = bytes[0x42..0x42 + (2 * filename_length) as usize]
+        let filename_u16: Vec<u16> = bytes[0x42..0x42 + (2 * filename_length as usize)]
             .chunks_exact(2)
             .map(|x| u16::from_le_bytes(get_bytes_2(&x).expect("filename_u16 error")))
             .collect();

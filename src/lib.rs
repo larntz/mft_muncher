@@ -4,6 +4,9 @@ pub mod file_record;
 /// This module contains ntfs file attribute related structs.
 pub mod ntfs_attributes;
 
+/// This module contains ntfs volume information.
+pub mod ntfs_volume_data;
+
 /// This module enumerates all files on a volume via DeviceIoControl() win32 calls.
 pub mod mft;
 

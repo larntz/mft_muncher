@@ -1,4 +1,4 @@
-use winapi::shared::minwindef::{DWORD, FILETIME, WORD};
+use winapi::shared::minwindef::{DWORD, WORD};
 use winapi::um::winnt::{DWORDLONG, USN};
 
 // https://docs.microsoft.com/en-us/windows/win32/api/winioctl/ns-winioctl-usn_record_v2
