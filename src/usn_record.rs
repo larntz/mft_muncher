@@ -15,10 +15,9 @@ pub struct USN_RECORD {
     pub FileReferenceNumber: DWORDLONG,
     pub ParentFileReferenceNumber: DWORDLONG,
     Usn: USN,
-    //TimeStamp: LARGE_INTEGER,
-    //Reason: DWORD,
-    //SourceInfo: DWORD,
-    _invalid: [u8; 16], // previous 3 values are not valid
+    TimeStamp: u64, // LARGE_INTEGER ~= u64
+    Reason: DWORD,
+    SourceInfo: DWORD,
     SecurityId: DWORD,
     FileAttributes: DWORD,
     FileNameLength: WORD,

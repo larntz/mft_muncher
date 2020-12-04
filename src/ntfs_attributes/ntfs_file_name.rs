@@ -63,37 +63,25 @@ pub struct NtfsFileNameAttribute {
 }
 impl NtfsFileNameAttribute {
     pub fn new(bytes: &[u8]) -> Result<NtfsFileNameAttribute, std::io::Error> {
-        let parent_frn = u64::from_le_bytes(get_bytes_8(&bytes[0x00..])?);
-        let file_create = u64::from_le_bytes(get_bytes_8(&bytes[0x08..])?);
-        let file_modified = u64::from_le_bytes(get_bytes_8(&bytes[0x10..])?);
-        let mft_modified = u64::from_le_bytes(get_bytes_8(&bytes[0x18..])?);
-        let file_read = u64::from_le_bytes(get_bytes_8(&bytes[0x20..])?);
-        let allocated_size = u64::from_le_bytes(get_bytes_8(&bytes[0x28..])?);
-        let real_size = u64::from_le_bytes(get_bytes_8(&bytes[0x30..])?);
-        let flags = u32::from_le_bytes(get_bytes_4(&bytes[0x38..])?);
-        let ea_reparse = u32::from_le_bytes(get_bytes_4(&bytes[0x3c..])?);
         let filename_length = u8::from_le_bytes(get_bytes_1(&bytes[0x40..])?);
-        let filename_namespace = u8::from_le_bytes(get_bytes_1(&bytes[0x41..])?);
-
         let filename_u16: Vec<u16> = bytes[0x42..0x42 + (2 * filename_length as usize)]
             .chunks_exact(2)
             .map(|x| u16::from_le_bytes(get_bytes_2(&x).expect("filename_u16 error")))
             .collect();
-        let filename = String::from_utf16_lossy(&filename_u16);
 
         Ok(NtfsFileNameAttribute {
-            parent_frn,
-            file_create,
-            file_modified,
-            mft_modified,
-            file_read,
-            allocated_size,
-            real_size,
-            flags,
-            ea_reparse,
+            parent_frn: u64::from_le_bytes(get_bytes_8(&bytes[0x00..])?),
+            file_create: u64::from_le_bytes(get_bytes_8(&bytes[0x08..])?),
+            file_modified: u64::from_le_bytes(get_bytes_8(&bytes[0x10..])?),
+            mft_modified: u64::from_le_bytes(get_bytes_8(&bytes[0x18..])?),
+            file_read: u64::from_le_bytes(get_bytes_8(&bytes[0x20..])?),
+            allocated_size: u64::from_le_bytes(get_bytes_8(&bytes[0x28..])?),
+            real_size: u64::from_le_bytes(get_bytes_8(&bytes[0x30..])?),
+            flags: u32::from_le_bytes(get_bytes_4(&bytes[0x38..])?),
+            ea_reparse: u32::from_le_bytes(get_bytes_4(&bytes[0x3c..])?),
             filename_length,
-            filename_namespace,
-            filename,
+            filename_namespace: u8::from_le_bytes(get_bytes_1(&bytes[0x41..])?),
+            filename: String::from_utf16_lossy(&filename_u16),
         })
     }
 }

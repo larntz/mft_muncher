@@ -1,7 +1,9 @@
+pub mod ntfs_attribute_list;
 pub mod ntfs_data;
 pub mod ntfs_file_name;
 pub mod ntfs_standard_information;
 
+use crate::ntfs_attributes::ntfs_attribute_list::NtfsAttributeListAttribute;
 use crate::utils::*;
 use ntfs_data::*;
 use ntfs_file_name::*;
@@ -118,43 +120,39 @@ pub struct NtfsAttributeHeader {
 impl NtfsAttributeHeader {
     pub fn new(bytes: &[u8]) -> Result<NtfsAttributeHeader, std::io::Error> {
         let attribute_type = u32::from_le_bytes(get_bytes_4(&bytes[0x00..])?);
-        let record_length = u32::from_le_bytes(get_bytes_4(&bytes[0x04..])?);
         let non_resident_flag = u8::from_le_bytes(get_bytes_1(&bytes[0x08..])?);
         let name_length = u8::from_le_bytes(get_bytes_1(&bytes[0x09..])?);
         let name_offset = u16::from_le_bytes(get_bytes_2(&bytes[0x0a..])?);
-        let flags = u16::from_le_bytes(get_bytes_2(&bytes[0x0c..])?);
-        let attribute_id = u16::from_le_bytes(get_bytes_2(&bytes[0x0e..])?);
-        let union_data = match non_resident_flag {
-            0 => {
-                // resident
-                NtfsAttributeUnion::Resident(ResidentAttribute {
-                    value_length: u32::from_le_bytes(get_bytes_4(&bytes[0x10..])?),
-                    value_offset: u16::from_le_bytes(get_bytes_2(&bytes[0x14..])?),
-                })
-            }
-            _ => {
-                // non-resident
-                NtfsAttributeUnion::NonResident(NonResidentAttribute {
-                    starting_vcn: u64::from_le_bytes(get_bytes_8(&bytes[0x10..])?),
-                    highest_vcn: u64::from_le_bytes(get_bytes_8(&bytes[0x18..])?),
-                    data_run_offset: u16::from_le_bytes(get_bytes_2(&bytes[0x20..])?),
-                    allocated_length: i64::from_le_bytes(get_bytes_8(&bytes[0x28..])?),
-                    file_size: i64::from_le_bytes(get_bytes_8(&bytes[0x30..])?),
-                    valid_data_length: i64::from_le_bytes(get_bytes_8(&bytes[0x38..])?),
-                    total_allocated: i64::from_le_bytes(get_bytes_8(&bytes[0x40..])?),
-                })
-            }
-        };
 
         Ok(NtfsAttributeHeader {
             attribute_type,
-            record_length,
+            record_length: u32::from_le_bytes(get_bytes_4(&bytes[0x04..])?),
             non_resident_flag,
             name_length,
             name_offset,
-            flags,
-            attribute_id,
-            union_data,
+            flags: u16::from_le_bytes(get_bytes_2(&bytes[0x0c..])?),
+            attribute_id: u16::from_le_bytes(get_bytes_2(&bytes[0x0e..])?),
+            union_data: match non_resident_flag {
+                0 => {
+                    // resident
+                    NtfsAttributeUnion::Resident(ResidentAttribute {
+                        value_length: u32::from_le_bytes(get_bytes_4(&bytes[0x10..])?),
+                        value_offset: u16::from_le_bytes(get_bytes_2(&bytes[0x14..])?),
+                    })
+                }
+                _ => {
+                    // non-resident
+                    NtfsAttributeUnion::NonResident(NonResidentAttribute {
+                        starting_vcn: u64::from_le_bytes(get_bytes_8(&bytes[0x10..])?),
+                        highest_vcn: u64::from_le_bytes(get_bytes_8(&bytes[0x18..])?),
+                        data_run_offset: u16::from_le_bytes(get_bytes_2(&bytes[0x20..])?),
+                        allocated_length: i64::from_le_bytes(get_bytes_8(&bytes[0x28..])?),
+                        file_size: i64::from_le_bytes(get_bytes_8(&bytes[0x30..])?),
+                        valid_data_length: i64::from_le_bytes(get_bytes_8(&bytes[0x38..])?),
+                        total_allocated: i64::from_le_bytes(get_bytes_8(&bytes[0x40..])?),
+                    })
+                }
+            },
             attribute_name: if name_length == 0 || attribute_type == 0xffffffff {
                 None
             } else {
@@ -210,10 +208,22 @@ impl NtfsAttribute {
                     Err(std::io::Error::from(std::io::ErrorKind::InvalidData))
                 }
             },
-            0x20 => Ok(Some(NtfsAttribute {
-                header,
-                metadata: NtfsAttributeType::AttributeList,
-            })),
+            0x20 => match &header.union_data {
+                NtfsAttributeUnion::Resident(v) => {
+                    let metadata = NtfsAttributeType::AttributeList(
+                        NtfsAttributeListAttribute::new(&bytes[v.value_offset as usize..])?,
+                    );
+
+                    Ok(Some(NtfsAttribute { header, metadata }))
+                }
+                NtfsAttributeUnion::NonResident(v) => {
+                    let metadata = NtfsAttributeType::AttributeList(
+                        NtfsAttributeListAttribute::new(&bytes[v.data_run_offset as usize..])?,
+                    );
+
+                    Ok(Some(NtfsAttribute { header, metadata }))
+                }
+            },
             0x30 => match &header.union_data {
                 NtfsAttributeUnion::Resident(v) => {
                     let metadata = NtfsAttributeType::FileName(NtfsFileNameAttribute::new(
@@ -287,7 +297,7 @@ impl NtfsAttribute {
 #[derive(Debug)]
 pub enum NtfsAttributeType {
     StandardInformation(NtfsStandardInformationAttribute),
-    AttributeList,
+    AttributeList(NtfsAttributeListAttribute),
     FileName(NtfsFileNameAttribute),
     Data(NtfsDataAttribute),
     ObjectID, // we ignore for now: https://flatcap.org/linux-ntfs/ntfs/attributes/object_id.html

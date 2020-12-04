@@ -50,7 +50,7 @@ pub struct NtfsStandardInformationAttribute {
     pub mft_altered: u64,    // 0x10
     pub file_read: u64,      // 0x18
     pub dos_attributes: u32, // 0x20
-    pub max_versions: u32,   //0x24
+    pub max_versions: u32,   // 0x24
     pub version: u32,        // 0x28
     pub class_id: u32,       // 0x2c
     pub owner_id: u32,       // 0x30
@@ -61,35 +61,19 @@ pub struct NtfsStandardInformationAttribute {
 
 impl NtfsStandardInformationAttribute {
     pub fn new(bytes: &[u8]) -> Result<NtfsStandardInformationAttribute, std::io::Error> {
-        let file_creation = u64::from_le_bytes(get_bytes_8(&bytes[0x00..])?);
-        let file_altered = u64::from_le_bytes(get_bytes_8(&bytes[0x08..])?);
-        let mft_altered = u64::from_le_bytes(get_bytes_8(&bytes[0x10..])?);
-        let file_read = u64::from_le_bytes(get_bytes_8(&bytes[0x18..])?);
-        let dos_attributes = u32::from_le_bytes(get_bytes_4(&bytes[0x20..])?);
-        let max_versions = u32::from_le_bytes(get_bytes_4(&bytes[0x24..])?);
-        let version = u32::from_le_bytes(get_bytes_4(&bytes[0x28..])?);
-        let class_id = u32::from_le_bytes(get_bytes_4(&bytes[0x2c..])?);
-        let owner_id = u32::from_le_bytes(get_bytes_4(&bytes[0x30..])?);
-        let security_id = u32::from_le_bytes(get_bytes_4(&bytes[0x34..])?);
-        let quota_charged = u64::from_le_bytes(get_bytes_8(&bytes[0x38..])?);
-        let usn = u64::from_le_bytes(get_bytes_8(&bytes[0x40..])?);
-
         Ok(NtfsStandardInformationAttribute {
-            file_creation,
-            file_altered,
-            mft_altered,
-            file_read,
-            dos_attributes,
-            max_versions,
-            version,
-            class_id,
-            owner_id,
-            security_id,
-            quota_charged,
-            usn,
+            file_creation: u64::from_le_bytes(get_bytes_8(&bytes[0x00..])?),
+            file_altered: u64::from_le_bytes(get_bytes_8(&bytes[0x08..])?),
+            mft_altered: u64::from_le_bytes(get_bytes_8(&bytes[0x10..])?),
+            file_read: u64::from_le_bytes(get_bytes_8(&bytes[0x18..])?),
+            dos_attributes: u32::from_le_bytes(get_bytes_4(&bytes[0x20..])?),
+            max_versions: u32::from_le_bytes(get_bytes_4(&bytes[0x24..])?),
+            version: u32::from_le_bytes(get_bytes_4(&bytes[0x28..])?),
+            class_id: u32::from_le_bytes(get_bytes_4(&bytes[0x2c..])?),
+            owner_id: u32::from_le_bytes(get_bytes_4(&bytes[0x30..])?),
+            security_id: u32::from_le_bytes(get_bytes_4(&bytes[0x34..])?),
+            quota_charged: u64::from_le_bytes(get_bytes_8(&bytes[0x38..])?),
+            usn: u64::from_le_bytes(get_bytes_8(&bytes[0x40..])?),
         })
     }
 }
-
-// pub const NTFS_STANDARD_INFORMATION_ATTRIBUTE_LENGTH: usize =
-//  std::mem::size_of::<NtfsStandardInformationAttribute>();

@@ -56,37 +56,24 @@ pub struct NtfsFileRecordHeader {
 
 impl NtfsFileRecordHeader {
     pub fn new(bytes: &[u8]) -> Result<NtfsFileRecordHeader, std::io::Error> {
-        let magic_number = u32::from_le_bytes(get_bytes_4(&bytes[0x00..])?);
-        let update_sequence_offset = u16::from_le_bytes(get_bytes_2(&bytes[0x04..])?);
-        let update_sequence_size = u16::from_le_bytes(get_bytes_2(&bytes[0x06..])?);
-        let logfile_sequence_number = u64::from_le_bytes(get_bytes_8(&bytes[0x08..])?);
-        let sequence_number = u16::from_le_bytes(get_bytes_2(&bytes[0x10..])?);
-        let hard_link_count = u16::from_le_bytes(get_bytes_2(&bytes[0x12..])?);
-        let attribute_offset = u16::from_le_bytes(get_bytes_2(&bytes[0x14..])?);
-        let flags = u16::from_le_bytes(get_bytes_2(&bytes[0x16..])?);
-        let real_record_size = u32::from_le_bytes(get_bytes_4(&bytes[0x18..])?);
-        let allocated_record_size = u32::from_le_bytes(get_bytes_4(&bytes[0x1c..])?);
-        let base_frn = u64::from_le_bytes(get_bytes_8(&bytes[0x20..])?);
-        let next_attribute_id = u16::from_le_bytes(get_bytes_2(&bytes[0x28..])?);
-        let mft_record_number = u32::from_le_bytes(get_bytes_4(&bytes[0x2c..])?);
-
         Ok(NtfsFileRecordHeader {
-            magic_number,
-            update_sequence_offset,
-            update_sequence_size,
-            logfile_sequence_number,
-            sequence_number,
-            hard_link_count,
-            attribute_offset,
-            flags,
-            real_record_size,
-            allocated_record_size,
-            base_frn,
-            next_attribute_id,
-            mft_record_number,
+            magic_number: u32::from_le_bytes(get_bytes_4(&bytes[0x00..])?),
+            update_sequence_offset: u16::from_le_bytes(get_bytes_2(&bytes[0x04..])?),
+            update_sequence_size: u16::from_le_bytes(get_bytes_2(&bytes[0x06..])?),
+            logfile_sequence_number: u64::from_le_bytes(get_bytes_8(&bytes[0x08..])?),
+            sequence_number: u16::from_le_bytes(get_bytes_2(&bytes[0x10..])?),
+            hard_link_count: u16::from_le_bytes(get_bytes_2(&bytes[0x12..])?),
+            attribute_offset: u16::from_le_bytes(get_bytes_2(&bytes[0x14..])?),
+            flags: u16::from_le_bytes(get_bytes_2(&bytes[0x16..])?),
+            real_record_size: u32::from_le_bytes(get_bytes_4(&bytes[0x18..])?),
+            allocated_record_size: u32::from_le_bytes(get_bytes_4(&bytes[0x1c..])?),
+            base_frn: u64::from_le_bytes(get_bytes_8(&bytes[0x20..])?),
+            next_attribute_id: u16::from_le_bytes(get_bytes_2(&bytes[0x28..])?),
+            mft_record_number: u32::from_le_bytes(get_bytes_4(&bytes[0x2c..])?),
         })
     }
 }
+
 #[derive(Debug)]
 pub struct NtfsFileRecord {
     // todo create new() constructing that takes the entire file record slice and does the job
