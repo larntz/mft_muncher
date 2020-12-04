@@ -220,7 +220,9 @@ impl NtfsAttribute {
                     let metadata = NtfsAttributeType::AttributeList(
                         NtfsAttributeListAttribute::new(&bytes[v.data_run_offset as usize..])?,
                     );
-
+                    dbg!(&header);
+                    dbg!(&metadata);
+                    panic!("just checking if this can be non-resident");
                     Ok(Some(NtfsAttribute { header, metadata }))
                 }
             },
