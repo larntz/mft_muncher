@@ -79,8 +79,6 @@ impl NtfsFileNameAttribute {
             .chunks_exact(2)
             .map(|x| u16::from_le_bytes(get_bytes_2(&x).expect("filename_u16 error")))
             .collect();
-        // x.try_into() .expect("This is cool. Uh huh huh... Ow. Cut it out, butt-hole."),
-        // )
         let filename = String::from_utf16_lossy(&filename_u16);
 
         Ok(NtfsFileNameAttribute {

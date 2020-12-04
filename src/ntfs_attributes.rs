@@ -1,8 +1,9 @@
-mod ntfs_data;
+pub mod ntfs_data;
 pub mod ntfs_file_name;
 pub mod ntfs_standard_information;
 
 use crate::utils::*;
+use ntfs_data::*;
 use ntfs_file_name::*;
 use ntfs_standard_information::*;
 
@@ -111,8 +112,7 @@ pub struct NtfsAttributeHeader {
     pub flags: u16,         // offset 0x0c
     pub attribute_id: u16,  // offset 0x0e
     pub union_data: NtfsAttributeUnion,
-    // pub attribute_length: u32,
-    // pub attribute_offset: u16,
+    pub attribute_name: Option<String>,
 }
 
 impl NtfsAttributeHeader {
@@ -134,7 +134,6 @@ impl NtfsAttributeHeader {
             }
             _ => {
                 // non-resident
-                dbg!(&bytes[0x40..].len());
                 NtfsAttributeUnion::NonResident(NonResidentAttribute {
                     starting_vcn: u64::from_le_bytes(get_bytes_8(&bytes[0x10..])?),
                     highest_vcn: u64::from_le_bytes(get_bytes_8(&bytes[0x18..])?),
@@ -156,12 +155,19 @@ impl NtfsAttributeHeader {
             flags,
             attribute_id,
             union_data,
+            attribute_name: if name_length == 0 || attribute_type == 0xffffffff {
+                None
+            } else {
+                let filename_u16: Vec<u16> = bytes
+                    [name_offset as usize..name_offset as usize + (2 * name_length) as usize]
+                    .chunks_exact(2)
+                    .map(|x| u16::from_le_bytes(get_bytes_2(&x).expect("filename_u16 error")))
+                    .collect();
+                Some(String::from_utf16_lossy(&filename_u16))
+            },
         })
     }
 }
-
-pub const NTFS_RESIDENT_ATTRIBUTE_COMMON_HEADER_LENGTH: usize =
-    std::mem::size_of::<NtfsAttributeHeader>();
 
 #[derive(Debug)]
 pub struct NtfsAttributeList {
@@ -198,29 +204,81 @@ impl NtfsAttribute {
                     let metadata = NtfsAttributeType::StandardInformation(
                         NtfsStandardInformationAttribute::new(&bytes[v.value_offset as usize..])?,
                     );
-                    return Ok(Some(NtfsAttribute { header, metadata }));
+                    Ok(Some(NtfsAttribute { header, metadata }))
                 }
-                NtfsAttributeUnion::NonResident(v) => {
-                    panic!("standard attributes should never be non-resident");
+                NtfsAttributeUnion::NonResident(_) => {
+                    Err(std::io::Error::from(std::io::ErrorKind::InvalidData))
                 }
             },
+            0x20 => Ok(Some(NtfsAttribute {
+                header,
+                metadata: NtfsAttributeType::AttributeList,
+            })),
             0x30 => match &header.union_data {
                 NtfsAttributeUnion::Resident(v) => {
                     let metadata = NtfsAttributeType::FileName(NtfsFileNameAttribute::new(
                         &bytes[v.value_offset as usize..],
                     )?);
-                    return Ok(Some(NtfsAttribute { header, metadata }));
+                    Ok(Some(NtfsAttribute { header, metadata }))
                 }
-                NtfsAttributeUnion::NonResident(v) => {
-                    panic!("file_name attributes should never be non-resident");
+                NtfsAttributeUnion::NonResident(_) => {
+                    Err(std::io::Error::from(std::io::ErrorKind::InvalidData))
                 }
             },
+            0x40 => Ok(Some(NtfsAttribute {
+                header,
+                metadata: NtfsAttributeType::ObjectID,
+            })),
+            0x80 => match &header.union_data {
+                NtfsAttributeUnion::Resident(v) => {
+                    let metadata = NtfsAttributeType::Data(NtfsDataAttribute::new(
+                        &bytes[v.value_offset as usize..],
+                    )?);
+                    Ok(Some(NtfsAttribute { header, metadata }))
+                }
+                NtfsAttributeUnion::NonResident(v) => {
+                    let metadata = NtfsAttributeType::Data(NtfsDataAttribute::new(
+                        &bytes[v.data_run_offset as usize..],
+                    )?);
+                    Ok(Some(NtfsAttribute { header, metadata }))
+                }
+            },
+            0x90 => Ok(Some(NtfsAttribute {
+                header,
+                metadata: NtfsAttributeType::IndexRoot,
+            })),
+            0xa0 => Ok(Some(NtfsAttribute {
+                header,
+                metadata: NtfsAttributeType::IndexAllocation,
+            })),
+            0xb0 => Ok(Some(NtfsAttribute {
+                header,
+                metadata: NtfsAttributeType::Bitmap,
+            })),
+            0xc0 => Ok(Some(NtfsAttribute {
+                header,
+                metadata: NtfsAttributeType::ReparsePoint,
+            })),
+            0xd0 => Ok(Some(NtfsAttribute {
+                header,
+                metadata: NtfsAttributeType::EaInformation,
+            })),
+            0xe0 => Ok(Some(NtfsAttribute {
+                header,
+                metadata: NtfsAttributeType::Ea,
+            })),
+            0x100 => Ok(Some(NtfsAttribute {
+                header,
+                metadata: NtfsAttributeType::LoggedUtilityStream,
+            })),
+            0xffffffff => Ok(None),
             _ => {
-                println!(
+                eprintln!(
                     "+-+-+-+ unprocessed attribute type {:#x} +-+-+-+ \n{:#?}",
                     &header.attribute_type, &header
                 );
-                return Ok(None);
+                panic!("add me");
+                // Ok(None)
             }
         }
     }
@@ -229,7 +287,17 @@ impl NtfsAttribute {
 #[derive(Debug)]
 pub enum NtfsAttributeType {
     StandardInformation(NtfsStandardInformationAttribute),
+    AttributeList,
     FileName(NtfsFileNameAttribute),
+    Data(NtfsDataAttribute),
+    ObjectID, // we ignore for now: https://flatcap.org/linux-ntfs/ntfs/attributes/object_id.html
+    IndexRoot, // we ignore for now: https://flatcap.org/linux-ntfs/ntfs/attributes/index_root.html
+    IndexAllocation, // we ignore for now: https://flatcap.org/linux-ntfs/ntfs/attributes/index_allocation.html
+    Bitmap, // we ignore for now: https://flatcap.org/linux-ntfs/ntfs/attributes/bitmap.html
+    ReparsePoint, // todo https://flatcap.org/linux-ntfs/ntfs/attributes/reparse_point.html
+    EaInformation,
+    Ea,
+    LoggedUtilityStream, // we ignore for now: https://flatcap.org/linux-ntfs/ntfs/attributes/logged_utility_stream.html
 }
 
 #[derive(Debug)]

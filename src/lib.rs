@@ -1,8 +1,8 @@
 /// This module contains struct FileRecord. FileRecord corresponds to an NTFS File Record with all attributes.
-mod file_record;
+pub mod file_record;
 
 /// This module contains ntfs file attribute related structs.
-mod ntfs_attributes;
+pub mod ntfs_attributes;
 
 /// This module enumerates all files on a volume via DeviceIoControl() win32 calls.
 pub mod mft;

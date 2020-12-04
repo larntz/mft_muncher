@@ -53,7 +53,6 @@ pub struct NtfsFileRecordHeader {
     pub next_attribute_id: u16,       // 0x28
     pub mft_record_number: u32,       // 0x2c
 }
-pub const NTFS_FILE_RECORD_HEADER_LENGTH: usize = std::mem::size_of::<NtfsFileRecordHeader>();
 
 impl NtfsFileRecordHeader {
     pub fn new(bytes: &[u8]) -> Result<NtfsFileRecordHeader, std::io::Error> {

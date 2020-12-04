@@ -9,7 +9,7 @@ pub const USN_RECORD_LENGTH: usize = 320; // size of USN_RECORD in bytes
 #[derive(Debug, Copy, Clone)]
 #[repr(C)]
 pub struct USN_RECORD {
-    RecordLength: DWORD,
+    pub RecordLength: DWORD,
     MajorVersion: WORD,
     MinorVersion: WORD,
     pub FileReferenceNumber: DWORDLONG,

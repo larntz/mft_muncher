@@ -1,9 +1,9 @@
 #[allow(unused_imports)]
-use crate::file_record::{FileRecord, NtfsFileRecordHeader, NTFS_FILE_RECORD_HEADER_LENGTH};
+use crate::file_record::{FileRecord, NtfsFileRecordHeader};
 use crate::ntfs_attributes::{
     ntfs_file_name::NtfsFileNameAttribute,
     ntfs_standard_information::NtfsStandardInformationAttribute, NtfsAttributeHeader,
-    NtfsAttributeUnion::*, NTFS_RESIDENT_ATTRIBUTE_COMMON_HEADER_LENGTH,
+    NtfsAttributeUnion::*,
 };
 use crate::usn_record::{USN_RECORD, USN_RECORD_LENGTH};
 use crate::utils::str_to_wstring;
@@ -46,6 +46,15 @@ use winapi::um::winnt::{
     TOKEN_ADJUST_PRIVILEGES,
 };
 
+#[allow(non_snake_case)]
+#[allow(non_camel_case_types)]
+#[repr(C)]
+struct MFT_ENUM_DATA_V0 {
+    StartFileReferenceNumber: DWORDLONG,
+    LowUsn: USN,
+    HighUsn: USN,
+}
+
 #[derive(Debug, Clone)]
 pub struct MFT {
     root_dir_frn: u64,
@@ -86,21 +95,37 @@ impl MFT {
     }
 
     pub fn get_record(&self, frn: u64) {
-        match MFT::get_ntfs_file_record(frn, self.volume_handle) {
+        match self.get_ntfs_file_record(frn) {
             Ok(record) => {
-                dbg!(record);
+                //dbg!(record);
             }
             Err(e) => {
-                dbg!(e);
+                unimplemented!()
             }
         }
+    }
+    pub fn get_all_ntfs_file_records(
+        &self,
+    ) -> Result<BTreeMap<u64, NtfsFileRecord>, std::io::Error> {
+        let mut records: BTreeMap<u64, NtfsFileRecord> = BTreeMap::new();
+
+        match MFT::get_all_file_usn(&self) {
+            Ok(frns) => {
+                for frn in frns {
+                    let rec = self.get_ntfs_file_record(frn)?;
+                    records.insert(frn, rec);
+                }
+            }
+            Err(e) => unimplemented!(),
+        }
+        Ok(records)
     }
     /*
         MFT PRIVATE FUNCTIONS
 
     */
 
-    fn get_ntfs_file_record(frn: u64, volume_handle: HANDLE) -> Result<FileRecord, Error> {
+    fn get_ntfs_file_record(&self, frn: u64) -> Result<NtfsFileRecord, Error> {
         let frn_l = unsafe {
             let mut large_i: LARGE_INTEGER = std::mem::zeroed::<LARGE_INTEGER>();
             *large_i.QuadPart_mut() = frn as i64;
@@ -117,7 +142,7 @@ impl MFT {
         let mut bytes_read = 0u32;
         match unsafe {
             DeviceIoControl(
-                volume_handle,
+                self.volume_handle,
                 FSCTL_GET_NTFS_FILE_RECORD,
                 &input_buffer as *const NTFS_FILE_RECORD_INPUT_BUFFER as LPVOID,
                 std::mem::size_of::<NTFS_FILE_RECORD_INPUT_BUFFER>() as DWORD,
@@ -135,162 +160,66 @@ impl MFT {
                 Err(last_error)
             }
             _ => {
-                // output is NTFS_FILE_RECORD_OUTPUT_BUFFER
-                // https://docs.microsoft.com/en-us/windows/win32/api/winioctl/ns-winioctl-ntfs_file_record_output_buffer
-                //
-                // typedef struct {
-                //   LARGE_INTEGER FileReferenceNumber;
-                //   DWORD         FileRecordLength;
-                //   BYTE          FileRecordBuffer[1];
-                // } NTFS_FILE_RECORD_OUTPUT_BUFFER, *PNTFS_FILE_RECORD_OUTPUT_BUFFER;
-                //
-                // output.FileRecordBuffer has the actual file record, but I am using the output_buffer
-                // offset by 12 (8 for LARGE_INTEGER and 4 for DWORD) bytes to parse the record and loop
-                // through attributes.
-                //
-                // For additional info see:
-                // https://www.cse.scu.edu/~tschwarz/coen252_07Fall/Lectures/NTFS.html
-                // https://flatcap.org/linux-ntfs/ntfs/concepts/file_record.html
-                // https://flatcap.org/linux-ntfs/ntfs/concepts/attribute_header.html
-                //
-
-                // let output = unsafe {
-                //     std::mem::transmute::<[u8; 16], NTFS_FILE_RECORD_OUTPUT_BUFFER>(
-                //         output_buffer[..16].try_into().expect("shit"),
-                //     )
-                // };
-
-                // todo why don't these match? Should they? What gives, man?
-                // dbg!(unsafe { frn.QuadPart() });
-                // dbg!(unsafe { *output.FileReferenceNumber.QuadPart() });
-                // dbg!(output.FileRecordLength);
-
-                // let file_record_bytes: Vec<u8> = output_buffer
-                //     [12..(output.FileRecordLength as usize + 12)]
-                //     .try_into()
-                //     .expect("you should handle this");
-
-                // let file_record_header = unsafe {
-                //     std::mem::transmute::<[u8; NTFS_FILE_RECORD_HEADER_LENGTH], NtfsFileRecordHeader>(
-                //         file_record[..NTFS_FILE_RECORD_HEADER_LENGTH]
-                //             .try_into()
-                //             .expect("you should handle this"),
-                //     )
-                // };
-
                 let file_record = NtfsFileRecord::new(&output_buffer[12..])?;
-                dbg!(&file_record);
 
-                // let mut attributes: Vec<Vec<u8>> = Vec::new();
-                // let mut attribute_offset = file_record.header.attribute_offset as usize;
-
-                /*
-                // loop through attributes
-                loop {
-                    let attribute_header =
-                        NtfsAttributeHeader::new(&file_record[attribute_offset..])
-                            .expect("todo: fix this someday");
-
-                    if attribute_header.attribute_type == 0xffffffff {
-                        break;
-                    } else {
-                        dbg!(&attribute_header);
-                    }
-                    // suck out the union_data
-                    // match attribute_header.union_data {
-                    //     Resident(data) => {
-                    //         dbg!(data);
-                    //     }
-                    //     NonResident(data) => {
-                    //         dbg!(data);
-                    //     }
-                    // }
-
-                    // let attribute_header = unsafe {
-                    //     std::mem::transmute::<
-                    //         [u8; NTFS_RESIDENT_ATTRIBUTE_COMMON_HEADER_LENGTH],
-                    //         NtfsAttributeHeader,
-                    //     >(
-                    //         file_record[attribute_offset
-                    //             ..attribute_offset + NTFS_RESIDENT_ATTRIBUTE_COMMON_HEADER_LENGTH]
-                    //             .try_into()
-                    //             .expect("danger will robinson!"),
-                    //     )
-                    // };
-
-                    // match attribute_header.attribute_type {
-                    //     0xffffffff => {
-                    //         // attribute list ends with 0xFFFFFFFF in the attribute type location
-                    //         break;
-                    //     }
-                    //     0x10 => {
-                    //         // standard_information attribute
-                    //         // expected to always be resident.
-                    //         println!("\n\n-------------------\n");
-                    //         dbg!(&attribute_header);
-                    //         assert_eq!(0, attribute_header.non_resident_flag);
-                    //         let standard_attribute = NtfsStandardInformationAttribute::new(
-                    //             &file_record[attribute_offset
-                    //                 + attribute_header.attribute_offset as usize
-                    //                 ..attribute_offset
-                    //                     + attribute_header.attribute_offset as usize
-                    //                     + NTFS_STANDARD_INFORMATION_ATTRIBUTE_LENGTH],
-                    //         );
-                    //         dbg!(&standard_attribute);
-                    //         println!("\n\n-------------------\n");
-                    //     }
-                    //     0x20 => {
-                    //         // attribute_list attribute
-                    //         println!("ATTRIBUTE_LIST")
-                    //     }
-                    //     0x30 => {
-                    //         // file_name attribute
-                    //         // expected to always be resident.
-                    //         println!("\n\n-------------------\n");
-                    //         dbg!(&attribute_header);
-                    //         assert_eq!(0, attribute_header.non_resident_flag);
-                    //         let filename_attribute = NtfsFileNameAttribute::new(
-                    //             &file_record[attribute_offset
-                    //                 + attribute_header.attribute_offset as usize
-                    //                 ..attribute_offset
-                    //                     + attribute_header.attribute_offset as usize
-                    //                     + attribute_header.attribute_length as usize],
-                    //         );
-                    //         dbg!(&filename_attribute);
-                    //         println!("\n\n-------------------\n");
-                    //     }
-                    //     0x80 => {
-                    //         // data attribute
-                    //         println!("DATA");
-                    //     }
-                    //     _ => {
-                    //         println!(
-                    //             "\n*** ignoring unmatched attribute type {:#x} {} ***\n",
-                    //             attribute_header.attribute_type, attribute_header.attribute_type,
-                    //         );
-                    //     }
-                    // }
-
-                    // attributes.push(
-                    //     file_record[attribute_offset
-                    //         ..attribute_offset + attribute_header.record_length as usize]
-                    //         .try_into()
-                    //         .expect("what am I doing"),
-                    // );
-
-                    attribute_offset += attribute_header.record_length as usize;
-                }
-                */
-
-                // todo parse attributes in a nice way...
-                // dbg!(attributes.len());
-                // println!("\n\n\n");
-
-                Ok(FileRecord::default())
+                Ok(file_record)
             }
         }
     }
 
+    fn get_all_file_usn(&self) -> Result<Vec<u64>, std::io::Error> {
+        let mut file_reference_numbers: Vec<u64> = Vec::new();
+        let mut output_buffer = [0u8; 1024 * 128]; // data out from DeviceIoControl()
+        let mut input_buffer = MFT_ENUM_DATA_V0 {
+            // into DeviceIoControl()
+            StartFileReferenceNumber: 0,
+            LowUsn: 0,
+            HighUsn: i64::MAX,
+        };
+
+        let mut mft_eof: bool = false;
+        while !mft_eof {
+            let mut buffer_cursor: isize = 8;
+            let mut bytes_read: u32 = 0;
+
+            unsafe {
+                // https://github.com/forensicmatt/RsWindowsThingies/blob/e9bbb44130fb54eb38c39f88082f33b5c86b9196/src/usn/winioctrl.rs#L75
+                if DeviceIoControl(
+                    self.volume_handle,
+                    FSCTL_ENUM_USN_DATA,
+                    &input_buffer as *const MFT_ENUM_DATA_V0 as LPVOID, // what does this mean?
+                    std::mem::size_of::<MFT_ENUM_DATA_V0>() as DWORD,
+                    output_buffer.as_mut_ptr() as *mut USN_RECORD as LPVOID,
+                    output_buffer.len() as DWORD,
+                    &mut bytes_read as LPDWORD,
+                    ptr::null_mut(),
+                ) == 0
+                {
+                    let last_error = std::io::Error::last_os_error();
+                    match last_error.raw_os_error().unwrap() {
+                        ERROR_HANDLE_EOF => {
+                            mft_eof = true;
+                            continue;
+                        }
+                        _ => return Err(last_error),
+                    }
+                }
+            }
+
+            input_buffer.StartFileReferenceNumber =
+                unsafe { *(output_buffer.as_ptr() as *const u64) };
+
+            while buffer_cursor < bytes_read as isize {
+                let buffer_pointer = unsafe { output_buffer.as_ptr().offset(buffer_cursor) };
+                let usn_record: &USN_RECORD = unsafe { std::mem::transmute(buffer_pointer) };
+
+                file_reference_numbers.push(usn_record.FileReferenceNumber);
+                // move the cursor to the start of the next record
+                buffer_cursor = buffer_cursor + (usn_record.RecordLength as isize);
+            }
+        }
+        Ok(file_reference_numbers)
+    }
     fn get_file_usn(file: &str) -> Result<USN_RECORD, Error> {
         let file_handle = MFT::get_file_read_handle(file)?;
         let mut output_buffer = [0u8; 1024]; // data out from DeviceIoControl()
