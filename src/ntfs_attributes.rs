@@ -117,32 +117,32 @@ pub struct NtfsAttributeHeader {
 
 impl NtfsAttributeHeader {
     pub fn new(bytes: &[u8]) -> Result<NtfsAttributeHeader, std::io::Error> {
-        let attribute_type = u32::from_le_bytes(get_bytes_4(&bytes[0x00..]).unwrap());
-        let record_length = u32::from_le_bytes(get_bytes_4(&bytes[0x04..]).unwrap());
-        let non_resident_flag = u8::from_le_bytes(get_bytes_1(&bytes[0x08..]).unwrap());
-        let name_length = u8::from_le_bytes(get_bytes_1(&bytes[0x09..]).unwrap());
-        let name_offset = u16::from_le_bytes(get_bytes_2(&bytes[0x0a..]).unwrap());
-        let flags = u16::from_le_bytes(get_bytes_2(&bytes[0x0c..]).unwrap());
-        let attribute_id = u16::from_le_bytes(get_bytes_2(&bytes[0x0e..]).unwrap());
+        let attribute_type = u32::from_le_bytes(get_bytes_4(&bytes[0x00..])?);
+        let record_length = u32::from_le_bytes(get_bytes_4(&bytes[0x04..])?);
+        let non_resident_flag = u8::from_le_bytes(get_bytes_1(&bytes[0x08..])?);
+        let name_length = u8::from_le_bytes(get_bytes_1(&bytes[0x09..])?);
+        let name_offset = u16::from_le_bytes(get_bytes_2(&bytes[0x0a..])?);
+        let flags = u16::from_le_bytes(get_bytes_2(&bytes[0x0c..])?);
+        let attribute_id = u16::from_le_bytes(get_bytes_2(&bytes[0x0e..])?);
         let union_data = match non_resident_flag {
             0 => {
                 // resident
                 NtfsAttributeUnion::Resident(ResidentAttribute {
-                    value_length: u32::from_le_bytes(get_bytes_4(&bytes[0x10..]).unwrap()),
-                    value_offset: u16::from_le_bytes(get_bytes_2(&bytes[0x14..]).unwrap()),
+                    value_length: u32::from_le_bytes(get_bytes_4(&bytes[0x10..])?),
+                    value_offset: u16::from_le_bytes(get_bytes_2(&bytes[0x14..])?),
                 })
             }
             _ => {
                 // non-resident
                 dbg!(&bytes[0x40..].len());
                 NtfsAttributeUnion::NonResident(NonResidentAttribute {
-                    starting_vcn: u64::from_le_bytes(get_bytes_8(&bytes[0x10..]).unwrap()),
-                    highest_vcn: u64::from_le_bytes(get_bytes_8(&bytes[0x18..]).unwrap()),
-                    data_run_offset: u16::from_le_bytes(get_bytes_2(&bytes[0x20..]).unwrap()),
-                    allocated_length: i64::from_le_bytes(get_bytes_8(&bytes[0x28..]).unwrap()),
-                    file_size: i64::from_le_bytes(get_bytes_8(&bytes[0x30..]).unwrap()),
-                    valid_data_length: i64::from_le_bytes(get_bytes_8(&bytes[0x38..]).unwrap()),
-                    total_allocated: i64::from_le_bytes(get_bytes_8(&bytes[0x40..]).unwrap()),
+                    starting_vcn: u64::from_le_bytes(get_bytes_8(&bytes[0x10..])?),
+                    highest_vcn: u64::from_le_bytes(get_bytes_8(&bytes[0x18..])?),
+                    data_run_offset: u16::from_le_bytes(get_bytes_2(&bytes[0x20..])?),
+                    allocated_length: i64::from_le_bytes(get_bytes_8(&bytes[0x28..])?),
+                    file_size: i64::from_le_bytes(get_bytes_8(&bytes[0x30..])?),
+                    valid_data_length: i64::from_le_bytes(get_bytes_8(&bytes[0x38..])?),
+                    total_allocated: i64::from_le_bytes(get_bytes_8(&bytes[0x40..])?),
                 })
             }
         };
