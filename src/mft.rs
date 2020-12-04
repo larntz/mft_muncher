@@ -41,6 +41,7 @@ struct MFT_ENUM_DATA_V0 {
 pub struct MFT {
     root_dir_frn: u64,
     volume_handle: HANDLE,
+    volume_data: NtfsVolumeData,
     pub file_records: BTreeMap<u64, Vec<FileRecord>>,
 }
 
@@ -53,10 +54,11 @@ impl MFT {
                     let mut v_guid = r_guid.clone().to_string();
                     v_guid.truncate(v_guid.len() - 1);
                     let handle = MFT::get_file_read_handle(&v_guid)?;
-                    let volume_data = MFT::get_ntfs_volume_data(handle);
+                    let volume_data = MFT::get_ntfs_volume_data(handle)?;
                     return Ok(MFT {
                         root_dir_frn: root_usn.FileReferenceNumber,
                         volume_handle: handle,
+                        volume_data,
                         file_records: BTreeMap::<u64, Vec<FileRecord>>::new(),
                     });
                 }
