@@ -2,8 +2,7 @@
 use crate::file_record::{FileRecord, NtfsFileRecordHeader, NTFS_FILE_RECORD_HEADER_LENGTH};
 use crate::ntfs_attributes::{
     ntfs_file_name::NtfsFileNameAttribute,
-    ntfs_standard_information::NtfsStandardInformationAttribute,
-    ntfs_standard_information::NTFS_STANDARD_INFORMATION_ATTRIBUTE_LENGTH, NtfsAttributeHeader,
+    ntfs_standard_information::NtfsStandardInformationAttribute, NtfsAttributeHeader,
     NtfsAttributeUnion::*, NTFS_RESIDENT_ATTRIBUTE_COMMON_HEADER_LENGTH,
 };
 use crate::usn_record::{USN_RECORD, USN_RECORD_LENGTH};

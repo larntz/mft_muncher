@@ -51,7 +51,6 @@ pub struct NtfsFileRecordHeader {
     pub allocated_record_size: u32,   // 0x1c
     pub base_frn: u64,                // 0x20
     pub next_attribute_id: u16,       // 0x28
-    pub align_4_byte: u16,            // 0x2a
     pub mft_record_number: u32,       // 0x2c
 }
 pub const NTFS_FILE_RECORD_HEADER_LENGTH: usize = std::mem::size_of::<NtfsFileRecordHeader>();
@@ -66,9 +65,27 @@ impl NtfsFileRecordHeader {
         let hard_link_count = u16::from_le_bytes(get_bytes_2(&bytes[0x12..])?);
         let attribute_offset = u16::from_le_bytes(get_bytes_2(&bytes[0x14..])?);
         let flags = u16::from_le_bytes(get_bytes_2(&bytes[0x16..])?);
-        let real_record_size =
+        let real_record_size = u32::from_le_bytes(get_bytes_4(&bytes[0x18..])?);
+        let allocated_record_size = u32::from_le_bytes(get_bytes_4(&bytes[0x1c..])?);
+        let base_frn = u64::from_le_bytes(get_bytes_8(&bytes[0x20..])?);
+        let next_attribute_id = u16::from_le_bytes(get_bytes_2(&bytes[0x28..])?);
+        let mft_record_number = u32::from_le_bytes(get_bytes_4(&bytes[0x2c..])?);
 
-        unimplemented!()
+        Ok(NtfsFileRecordHeader {
+            magic_number,
+            update_sequence_offset,
+            update_sequence_size,
+            logfile_sequence_number,
+            sequence_number,
+            hard_link_count,
+            attribute_offset,
+            flags,
+            real_record_size,
+            allocated_record_size,
+            base_frn,
+            next_attribute_id,
+            mft_record_number,
+        })
     }
 }
 #[derive(Debug)]

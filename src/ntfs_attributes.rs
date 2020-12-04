@@ -129,7 +129,7 @@ impl NtfsAttributeHeader {
                 // resident
                 NtfsAttributeUnion::Resident(ResidentAttribute {
                     value_length: u32::from_le_bytes(get_bytes_4(&bytes[0x10..]).unwrap()),
-                    value_offset: u32::from_le_bytes(get_bytes_4(&bytes[0x14..]).unwrap()),
+                    value_offset: u16::from_le_bytes(get_bytes_2(&bytes[0x14..]).unwrap()),
                 })
             }
             _ => {
@@ -169,7 +169,18 @@ pub struct NtfsAttributeList {
 }
 impl NtfsAttributeList {
     pub fn new(bytes: &[u8]) -> Result<Vec<NtfsAttribute>, std::io::Error> {
-        unimplemented!()
+        let mut attributes: Vec<NtfsAttribute> = Vec::new();
+        let mut offset: usize = 0;
+        loop {
+            match NtfsAttribute::new(&bytes[offset..])? {
+                Some(attribute) => {
+                    offset += attribute.header.record_length as usize;
+                    attributes.push(attribute);
+                }
+                None => break, // or we loop forever
+            }
+        }
+        Ok(attributes)
     }
 }
 
@@ -179,8 +190,34 @@ pub struct NtfsAttribute {
     pub metadata: NtfsAttributeType,
 }
 impl NtfsAttribute {
-    pub fn new(bytes: &[u8]) -> Result<NtfsAttribute, std::io::Error> {
-        unimplemented!()
+    pub fn new(bytes: &[u8]) -> Result<Option<NtfsAttribute>, std::io::Error> {
+        let header = NtfsAttributeHeader::new(bytes)?;
+        match &header.attribute_type {
+            0x10 => match &header.union_data {
+                NtfsAttributeUnion::Resident(v) => {
+                    let metadata = NtfsAttributeType::StandardInformation(
+                        NtfsStandardInformationAttribute::new(&bytes[v.value_offset as usize..])?,
+                    );
+
+                    return Ok(Some(NtfsAttribute { header, metadata }));
+                }
+                NtfsAttributeUnion::NonResident(v) => {
+                    panic!("standard attributes should never be non-resident");
+                }
+            },
+            0x30 => match &header.union_data {
+                NtfsAttributeUnion::Resident(v) => {
+                    let metadata = NtfsAttributeType::FileName(NtfsFileNameAttribute::new(
+                        &bytes[v.value_offset as usize..],
+                    )?);
+                    return Ok(Some(NtfsAttribute { header, metadata }));
+                }
+                NtfsAttributeUnion::NonResident(v) => {
+                    panic!("file_name attributes should never be non-resident");
+                }
+            },
+            _ => return Ok(None),
+        }
     }
 }
 
@@ -199,7 +236,7 @@ pub enum NtfsAttributeUnion {
 #[derive(Debug)]
 pub struct ResidentAttribute {
     pub value_length: u32, // offset 0x10 The size of the attribute value, in bytes.
-    pub value_offset: u32, // offset 0x14 The offset to the value from the start of the attribute record, in bytes.
+    pub value_offset: u16, // offset 0x14 The offset to the value from the start of the attribute record, in bytes.
 }
 
 #[derive(Debug)]
