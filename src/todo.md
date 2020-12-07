@@ -35,3 +35,16 @@ _These functions should be passed a &[u8] and go from there_
 
 (A) 12-2-2020 how to calculate sizes when we have $ATTRIBUTE_LIST pointing to multiple non-resident $DATA streams.
     * It seems that the size fields on those non-resident $DATA streams are always 0. May need to figure out how to work with __data runs__.
+
+### Non-Resident $ATTRIBUTE_LIST
+
+This appears to contain no information itself. The resident ATTRIBUTE_LIST has the additional attributes in the record. 
+
+It seems that to get the additional attributes from a non-resident ATTRIBUTE_LIST you must look up the record specified in the base_frn of the non-resident ATTRIBUTE_LIST.
+
+Question? What if there needs to be multiple other ATTRIBUTE_LISTS? Maybe the record pointed in the base_frn above contains an additional ATTRIBUTE_LIST plus other DATA (or whatever) ATTRIBUTES...
+
+### Data Runs
+
+See [https://flatcap.org/linux-ntfs/ntfs/concepts/data_runs.html](https://flatcap.org/linux-ntfs/ntfs/concepts/data_runs.html)
+

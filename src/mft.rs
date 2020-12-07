@@ -76,8 +76,11 @@ impl MFT {
     pub fn get_record(&self, frn: u64) -> Result<NtfsFileRecord, std::io::Error> {
         // may want to create two sets of functions.  one that returns the all parts
         // of the ntfs records and another that returns the abbreviated ntfs record.
-        self.get_ntfs_file_record(frn)
+        let x = self.get_ntfs_file_record(frn).unwrap();
+        dbg!(&x);
+        Ok(x)
     }
+
     pub fn get_all_ntfs_file_records(
         &self,
     ) -> Result<BTreeMap<u64, NtfsFileRecord>, std::io::Error> {
@@ -86,6 +89,7 @@ impl MFT {
         match MFT::get_all_file_usn(&self) {
             Ok(frns) => {
                 for frn in frns {
+                    println!("fetching frn {}", frn);
                     let rec = self.get_ntfs_file_record(frn)?;
                     records.insert(frn, rec);
                 }
@@ -96,7 +100,6 @@ impl MFT {
     }
     /*
         MFT PRIVATE FUNCTIONS
-
     */
 
     fn get_ntfs_file_record(&self, frn: u64) -> Result<NtfsFileRecord, Error> {
@@ -135,7 +138,7 @@ impl MFT {
             }
             _ => {
                 let file_record = NtfsFileRecord::new(&output_buffer[12..])?;
-
+                // todo while self.extra_segments != 0 { process_segments(self.extra_segment) }
                 Ok(file_record)
             }
         }

@@ -10,36 +10,41 @@ fn main() {
             println!("got struct MFT in {} ns", start.elapsed().as_nanos());
             dbg!(&mft);
 
-            let start = Instant::now();
-            match mft.get_all_ntfs_file_records() {
-                Ok(records) => {
-                    println!(
-                        "mft.get_all_ntfs_file_records() returned {} records in {} ms",
-                        records.len(),
-                        start.elapsed().as_millis()
-                    );
+            // let start = Instant::now();
+            // match mft.get_all_ntfs_file_records() {
+            //     Ok(records) => {
+            //         println!(
+            //             "mft.get_all_ntfs_file_records() returned {} records in {} ms",
+            //             records.len(),
+            //             start.elapsed().as_millis()
+            //         );
 
-                    let _ = std::process::Command::new("cmd.exe")
-                        .arg("/c")
-                        .arg("pause")
-                        .status();
+            //         let _ = std::process::Command::new("cmd.exe")
+            //             .arg("/c")
+            //             .arg("pause")
+            //             .status();
 
-                    for r in records {
-                        let list: Vec<&mft_muncher::ntfs_attributes::NtfsAttribute> =
-                            r.1.attributes
-                                .iter()
-                                .filter(|x| x.header.attribute_type == 0x20)
-                                .collect();
-                        if list.len() > 0 {
-                            dbg!(r);
-                            break;
-                        }
-                    }
-                }
-                Err(e) => {
-                    eprintln!("ERROR from get_all_ntfs_file_records => {}", e);
-                }
-            }
+            //         for r in records {
+            //             let list: Vec<&mft_muncher::ntfs_attributes::NtfsAttribute> =
+            //                 r.1.attributes
+            //                     .iter()
+            //                     .filter(|x| x.header.attribute_type == 0x20)
+            //                     .collect();
+            //             if list.len() > 0 {
+            //                 dbg!(r);
+            //                 break;
+            //             }
+            //         }
+            //     }
+            //     Err(e) => {
+            //         eprintln!("ERROR from get_all_ntfs_file_records => {}", e);
+            //     }
+            // }
+            println!("getting 102456891522680861");
+            mft.get_record(102456891522680861);
+
+            println!("getting 281578055925848");
+            mft.get_record(268435456);
 
             // do some mft stuff
             // mft.get_record(1407374883553285);

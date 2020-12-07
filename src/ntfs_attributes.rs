@@ -209,20 +209,36 @@ impl NtfsAttribute {
                 }
             },
             0x20 => match &header.union_data {
+                // todo: process each attribute that is in this
                 NtfsAttributeUnion::Resident(v) => {
-                    let metadata = NtfsAttributeType::AttributeList(
-                        NtfsAttributeListAttribute::new(&bytes[v.value_offset as usize..])?,
-                    );
+                    let metadata =
+                        NtfsAttributeType::AttributeList(NtfsAttributeListAttribute::new(
+                            &bytes[v.value_offset as usize..],
+                            v.value_length as usize,
+                        )?);
 
                     Ok(Some(NtfsAttribute { header, metadata }))
                 }
                 NtfsAttributeUnion::NonResident(v) => {
-                    let metadata = NtfsAttributeType::AttributeList(
-                        NtfsAttributeListAttribute::new(&bytes[v.data_run_offset as usize..])?,
-                    );
-                    dbg!(&header);
-                    dbg!(&metadata);
-                    panic!("just checking if this can be non-resident");
+                    // todo how parse NonResident attributes??
+                    // dbg!(&header);
+                    // let metadata =
+                    //     NtfsAttributeType::AttributeList(vec![NtfsAttributeListAttribute {
+                    //         attribute_type: 0,
+                    //         record_length: 0,
+                    //         name_length: 0,
+                    //         name_offset: 0,
+                    //         starting_vcn: 0,
+                    //         base_frn: 0,
+                    //         attribute_name: None,
+                    //     }]);
+                    let metadata =
+                        NtfsAttributeType::AttributeList(NtfsAttributeListAttribute::new(
+                            &bytes[0x0e as usize..],
+                            v.valid_data_length as usize,
+                        )?);
+                    // dbg!(&metadata);
+                    // panic!("just checking if this can be non-resident");
                     Ok(Some(NtfsAttribute { header, metadata }))
                 }
             },
@@ -299,7 +315,7 @@ impl NtfsAttribute {
 #[derive(Debug)]
 pub enum NtfsAttributeType {
     StandardInformation(NtfsStandardInformationAttribute),
-    AttributeList(NtfsAttributeListAttribute),
+    AttributeList(Vec<NtfsAttributeListAttribute>),
     FileName(NtfsFileNameAttribute),
     Data(NtfsDataAttribute),
     ObjectID, // we ignore for now: https://flatcap.org/linux-ntfs/ntfs/attributes/object_id.html
