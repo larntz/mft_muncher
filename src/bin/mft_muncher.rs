@@ -19,6 +19,11 @@ fn main() {
                         start.elapsed().as_millis()
                     );
 
+                    let _ = std::process::Command::new("cmd.exe")
+                        .arg("/c")
+                        .arg("pause")
+                        .status();
+
                     for r in records {
                         let list: Vec<&mft_muncher::ntfs_attributes::NtfsAttribute> =
                             r.1.attributes
@@ -40,10 +45,6 @@ fn main() {
             // mft.get_record(1407374883553285);
             // mft.get_record(61080069946295717);
             // mft.get_record(15762598695893097);
-            let _ = std::process::Command::new("cmd.exe")
-                .arg("/c")
-                .arg("pause")
-                .status();
         }
         Err(e) => {
             println!("ERROR from MFT::new() =>  {}", e);
