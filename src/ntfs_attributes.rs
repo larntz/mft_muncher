@@ -102,7 +102,23 @@ There are 4 combinations of attributes and headers:
 
 **/
 
-// todo create one struct containing all attribute information (header, metadata).
+pub const ATTRIBUTE_TYPE_STANDARD_INFORMATION: u32 = 0x10;
+pub const ATTRIBUTE_TYPE_ATTRIBUTE_LIST: u32 = 0x20;
+pub const ATTRIBUTE_TYPE_FILE_NAME: u32 = 0x30;
+pub const ATTRIBUTE_TYPE_OBJECT_ID: u32 = 0x40;
+pub const ATTRIBUTE_TYPE_SECURITY_DESCRIPTOR: u32 = 0x50;
+pub const ATTRIBUTE_TYPE_VOLUME_NAME: u32 = 0x60;
+pub const ATTRIBUTE_TYPE_VOLUME_INFORMATION: u32 = 0x70;
+pub const ATTRIBUTE_TYPE_DATA: u32 = 0x80;
+pub const ATTRIBUTE_TYPE_INDEX_ROOT: u32 = 0x90;
+pub const ATTRIBUTE_TYPE_INDEX_ALLOCATION: u32 = 0xa0;
+pub const ATTRIBUTE_TYPE_BITMAP: u32 = 0xb0;
+pub const ATTRIBUTE_TYPE_REPARSE_POINT: u32 = 0xc0;
+pub const ATTRIBUTE_TYPE_EA_INFORMATION: u32 = 0xd0;
+pub const ATTRIBUTE_TYPE_EA: u32 = 0xe0;
+pub const ATTRIBUTE_TYPE_LOGGED_UTILITY_STREAM: u32 = 0x100;
+pub const ATTRIBUTE_END: u32 = 0xffffffff;
+
 #[derive(Debug)]
 // #[repr(C)]
 pub struct NtfsAttributeHeader {
@@ -197,7 +213,7 @@ impl NtfsAttribute {
     pub fn new(bytes: &[u8]) -> Result<Option<NtfsAttribute>, std::io::Error> {
         let header = NtfsAttributeHeader::new(bytes)?;
         match &header.attribute_type {
-            0x10 => match &header.union_data {
+            &ATTRIBUTE_TYPE_STANDARD_INFORMATION => match &header.union_data {
                 NtfsAttributeUnion::Resident(v) => {
                     let metadata = NtfsAttributeType::StandardInformation(
                         NtfsStandardInformationAttribute::new(&bytes[v.value_offset as usize..])?,
@@ -208,7 +224,7 @@ impl NtfsAttribute {
                     Err(std::io::Error::from(std::io::ErrorKind::InvalidData))
                 }
             },
-            0x20 => match &header.union_data {
+            &ATTRIBUTE_TYPE_ATTRIBUTE_LIST => match &header.union_data {
                 // todo: process each attribute that is in this
                 NtfsAttributeUnion::Resident(v) => {
                     let metadata =
@@ -220,29 +236,24 @@ impl NtfsAttribute {
                     Ok(Some(NtfsAttribute { header, metadata }))
                 }
                 NtfsAttributeUnion::NonResident(v) => {
-                    // todo how parse NonResident attributes??
-                    // dbg!(&header);
-                    // let metadata =
-                    //     NtfsAttributeType::AttributeList(vec![NtfsAttributeListAttribute {
-                    //         attribute_type: 0,
-                    //         record_length: 0,
-                    //         name_length: 0,
-                    //         name_offset: 0,
-                    //         starting_vcn: 0,
-                    //         base_frn: 0,
-                    //         attribute_name: None,
-                    //     }]);
+                    /*
+                       For a non-resident attribute list the values are no in the mft.
+                       todo could we follow the data run and retrieve more info??
+                    */
                     let metadata =
-                        NtfsAttributeType::AttributeList(NtfsAttributeListAttribute::new(
-                            &bytes[0x0e as usize..],
-                            v.valid_data_length as usize,
-                        )?);
-                    // dbg!(&metadata);
-                    // panic!("just checking if this can be non-resident");
+                        NtfsAttributeType::AttributeList(vec![NtfsAttributeListAttribute {
+                            attribute_type: 0x42,
+                            record_length: 0x42,
+                            name_length: 0x42,
+                            name_offset: 0x42,
+                            starting_vcn: 0x42,
+                            base_frn: 0x42,
+                            attribute_name: Some(String::from("NonResident$ATTRIBUTE_LIST")),
+                        }]);
                     Ok(Some(NtfsAttribute { header, metadata }))
                 }
             },
-            0x30 => match &header.union_data {
+            &ATTRIBUTE_TYPE_FILE_NAME => match &header.union_data {
                 NtfsAttributeUnion::Resident(v) => {
                     let metadata = NtfsAttributeType::FileName(NtfsFileNameAttribute::new(
                         &bytes[v.value_offset as usize..],
@@ -253,11 +264,11 @@ impl NtfsAttribute {
                     Err(std::io::Error::from(std::io::ErrorKind::InvalidData))
                 }
             },
-            0x40 => Ok(Some(NtfsAttribute {
+            &ATTRIBUTE_TYPE_OBJECT_ID => Ok(Some(NtfsAttribute {
                 header,
                 metadata: NtfsAttributeType::ObjectID,
             })),
-            0x80 => match &header.union_data {
+            &ATTRIBUTE_TYPE_DATA => match &header.union_data {
                 NtfsAttributeUnion::Resident(v) => {
                     let metadata = NtfsAttributeType::Data(NtfsDataAttribute::new(
                         &bytes[v.value_offset as usize..],
@@ -271,35 +282,35 @@ impl NtfsAttribute {
                     Ok(Some(NtfsAttribute { header, metadata }))
                 }
             },
-            0x90 => Ok(Some(NtfsAttribute {
+            &ATTRIBUTE_TYPE_INDEX_ROOT => Ok(Some(NtfsAttribute {
                 header,
                 metadata: NtfsAttributeType::IndexRoot,
             })),
-            0xa0 => Ok(Some(NtfsAttribute {
+            &ATTRIBUTE_TYPE_INDEX_ALLOCATION => Ok(Some(NtfsAttribute {
                 header,
                 metadata: NtfsAttributeType::IndexAllocation,
             })),
-            0xb0 => Ok(Some(NtfsAttribute {
+            &ATTRIBUTE_TYPE_BITMAP => Ok(Some(NtfsAttribute {
                 header,
                 metadata: NtfsAttributeType::Bitmap,
             })),
-            0xc0 => Ok(Some(NtfsAttribute {
+            &ATTRIBUTE_TYPE_REPARSE_POINT => Ok(Some(NtfsAttribute {
                 header,
                 metadata: NtfsAttributeType::ReparsePoint,
             })),
-            0xd0 => Ok(Some(NtfsAttribute {
+            &ATTRIBUTE_TYPE_EA_INFORMATION => Ok(Some(NtfsAttribute {
                 header,
                 metadata: NtfsAttributeType::EaInformation,
             })),
-            0xe0 => Ok(Some(NtfsAttribute {
+            &ATTRIBUTE_TYPE_EA => Ok(Some(NtfsAttribute {
                 header,
                 metadata: NtfsAttributeType::Ea,
             })),
-            0x100 => Ok(Some(NtfsAttribute {
+            &ATTRIBUTE_TYPE_LOGGED_UTILITY_STREAM => Ok(Some(NtfsAttribute {
                 header,
                 metadata: NtfsAttributeType::LoggedUtilityStream,
             })),
-            0xffffffff => Ok(None),
+            &ATTRIBUTE_END => Ok(None),
             _ => {
                 eprintln!(
                     "+-+-+-+ unprocessed attribute type {:#x} +-+-+-+ \n{:#?}",

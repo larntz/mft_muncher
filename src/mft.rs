@@ -76,9 +76,7 @@ impl MFT {
     pub fn get_record(&self, frn: u64) -> Result<NtfsFileRecord, std::io::Error> {
         // may want to create two sets of functions.  one that returns the all parts
         // of the ntfs records and another that returns the abbreviated ntfs record.
-        let x = self.get_ntfs_file_record(frn).unwrap();
-        dbg!(&x);
-        Ok(x)
+        self.get_ntfs_file_record(frn)
     }
 
     pub fn get_all_ntfs_file_records(
@@ -89,7 +87,6 @@ impl MFT {
         match MFT::get_all_file_usn(&self) {
             Ok(frns) => {
                 for frn in frns {
-                    println!("fetching frn {}", frn);
                     let rec = self.get_ntfs_file_record(frn)?;
                     records.insert(frn, rec);
                 }

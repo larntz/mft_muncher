@@ -1,3 +1,4 @@
+use crate::ntfs_attributes::ATTRIBUTE_END;
 use crate::utils::*;
 
 /**
@@ -37,23 +38,6 @@ impl NtfsAttributeListAttribute {
         let mut offset: usize = 0;
         let mut list: Vec<NtfsAttributeListAttribute> = Vec::new();
 
-        // testing
-        println!("length {}, bytes.len() {}", length, bytes.len());
-        let b = u8::from_le_bytes(get_bytes_1(&bytes[0..1])?);
-        println!(
-            "header {:#x}, {} byte length, {} byte offset",
-            b,
-            b % 0x10,
-            b / 0x10
-        );
-        let o2 = b % 0x10;
-        let o3 = b / 0x10;
-        let b = u8::from_le_bytes(get_bytes_1(&bytes[1..2])?);
-        let c = u16::from_le_bytes(get_bytes_2(&bytes[2..4])?);
-        println!("b {}, c {}", b, c);
-        println!("{:?}", &bytes);
-        // end testing
-
         while offset < length {
             // this works ONLY if the ATTRIBUTE_LIST is resident.  Otherwise there is no offset and we loop forever or worse
             let attribute_type = u32::from_le_bytes(get_bytes_4(&bytes[offset + 0x00..])?);
@@ -62,7 +46,7 @@ impl NtfsAttributeListAttribute {
             let name_offset = u8::from_le_bytes(get_bytes_1(&bytes[offset + 0x07..])?);
             let starting_vcn = u64::from_le_bytes(get_bytes_8(&bytes[offset + 0x10..])?);
             let base_frn = u64::from_le_bytes(get_bytes_8(&bytes[offset + 0x18..])?);
-            let attribute_name = if name_length == 0 || attribute_type == 0xffffffff {
+            let attribute_name = if name_length == 0 || attribute_type == ATTRIBUTE_END {
                 None
             } else {
                 let attribute_name_u16: Vec<u16> = bytes[offset + name_offset as usize
@@ -72,10 +56,6 @@ impl NtfsAttributeListAttribute {
                     .collect();
                 Some(String::from_utf16_lossy(&attribute_name_u16))
             };
-            println!(
-                "type: {}, length: {}, starting_vcn {}, base_frn {}",
-                &attribute_type, &record_length, &starting_vcn, base_frn
-            );
 
             list.push(NtfsAttributeListAttribute {
                 attribute_type,
