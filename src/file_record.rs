@@ -96,7 +96,7 @@ impl NtfsFileRecord {
             .filter(|x| x.header.attribute_type == ATTRIBUTE_TYPE_FILE_NAME)
         {
             if let NtfsAttributeType::FileName(file_name) = &attribute.metadata {
-                if file_name.filename_namespace == 0 || file_name.filename_namespace == 3 {
+                if file_name.filename_namespace == 1 || file_name.filename_namespace == 3 {
                     return Some(file_name.filename.clone());
                 }
             }

@@ -227,10 +227,11 @@ impl NtfsAttribute {
             &ATTRIBUTE_TYPE_ATTRIBUTE_LIST => match &header.union_data {
                 // todo: process each attribute that is in this
                 NtfsAttributeUnion::Resident(v) => {
+                    let length: usize = v.value_length as usize;
                     let metadata =
                         NtfsAttributeType::AttributeList(NtfsAttributeListAttribute::new(
-                            &bytes[v.value_offset as usize..],
-                            v.value_length as usize,
+                            &bytes[v.value_offset as usize..v.value_offset as usize + length],
+                            true,
                         )?);
 
                     Ok(Some(NtfsAttribute { header, metadata }))
@@ -240,16 +241,22 @@ impl NtfsAttribute {
                        For a non-resident attribute list the values are no in the mft.
                        todo could we follow the data run and retrieve more info??
                     */
+                    let length: usize = header.record_length as usize - v.data_run_offset as usize;
                     let metadata =
-                        NtfsAttributeType::AttributeList(vec![NtfsAttributeListAttribute {
-                            attribute_type: 0x42,
-                            record_length: 0x42,
-                            name_length: 0x42,
-                            name_offset: 0x42,
-                            starting_vcn: 0x42,
-                            base_frn: 0x42,
-                            attribute_name: Some(String::from("NonResident$ATTRIBUTE_LIST")),
-                        }]);
+                        NtfsAttributeType::AttributeList(NtfsAttributeListAttribute::new(
+                            &bytes[v.data_run_offset as usize..v.data_run_offset as usize + length],
+                            false,
+                        )?);
+
+                    // NtfsAttributeType::AttributeList(vec![NtfsAttributeListAttribute {
+                    //     attribute_type: 0x42,
+                    //     record_length: 0x42,
+                    //     name_length: 0x42,
+                    //     name_offset: 0x42,
+                    //     starting_vcn: 0x42,
+                    //     base_frn: 0x42,
+                    //     attribute_name: Some(String::from("NonResident$ATTRIBUTE_LIST")),
+                    // }]);
                     Ok(Some(NtfsAttribute { header, metadata }))
                 }
             },

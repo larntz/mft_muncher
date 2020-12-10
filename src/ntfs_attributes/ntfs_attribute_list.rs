@@ -33,19 +33,26 @@ pub struct NtfsAttributeListAttribute {
 impl NtfsAttributeListAttribute {
     pub fn new(
         bytes: &[u8],
-        length: usize,
+        resident: bool,
     ) -> Result<Vec<NtfsAttributeListAttribute>, std::io::Error> {
+        match resident {
+            true => NtfsAttributeListAttribute::new_resident(bytes),
+            false => NtfsAttributeListAttribute::new_non_resident(bytes),
+        }
+    }
+
+    fn new_resident(bytes: &[u8]) -> Result<Vec<NtfsAttributeListAttribute>, std::io::Error> {
         let mut offset: usize = 0;
         let mut list: Vec<NtfsAttributeListAttribute> = Vec::new();
 
-        while offset < length {
+        while offset < bytes.len() {
             // this works ONLY if the ATTRIBUTE_LIST is resident.  Otherwise there is no offset and we loop forever or worse
             let attribute_type = u32::from_le_bytes(get_bytes_4(&bytes[offset + 0x00..])?);
             let record_length = u16::from_le_bytes(get_bytes_2(&bytes[offset + 0x04..])?);
             let name_length = u8::from_le_bytes(get_bytes_1(&bytes[offset + 0x06..])?);
             let name_offset = u8::from_le_bytes(get_bytes_1(&bytes[offset + 0x07..])?);
-            let starting_vcn = u64::from_le_bytes(get_bytes_8(&bytes[offset + 0x10..])?);
-            let base_frn = u64::from_le_bytes(get_bytes_8(&bytes[offset + 0x18..])?);
+            let starting_vcn = u64::from_le_bytes(get_bytes_8(&bytes[offset + 0x08..])?);
+            let base_frn = u64::from_le_bytes(get_bytes_8(&bytes[offset + 0x10..])?);
             let attribute_name = if name_length == 0 || attribute_type == ATTRIBUTE_END {
                 None
             } else {
@@ -74,5 +81,34 @@ impl NtfsAttributeListAttribute {
         }
 
         Ok(list)
+    }
+
+    fn new_non_resident(bytes: &[u8]) -> Result<Vec<NtfsAttributeListAttribute>, std::io::Error> {
+        #[cfg(debug_assertions)]
+        {
+            println!(
+                "NtfsAttributeListAttribute::new_non_resident(): got {} bytes \n{:?}",
+                bytes.len(),
+                &bytes
+            );
+
+            let run_length_bytes = &bytes[0] % 0x10;
+            let run_offset_bytes = &bytes[0] / 0x10;
+
+            println!(
+                    "header (&bytes[0]) {:#x}, run length specified in  {} bytes, run offset specified in  {} bytes",
+                    &bytes[0], run_length_bytes, run_offset_bytes
+                );
+        }
+
+        Ok(vec![NtfsAttributeListAttribute {
+            attribute_type: 0x42,
+            record_length: 0x42,
+            name_length: 0x42,
+            name_offset: 0x42,
+            starting_vcn: 0x42,
+            base_frn: 0x42,
+            attribute_name: Some(String::from("NonResident$ATTRIBUTE_LIST")),
+        }])
     }
 }
