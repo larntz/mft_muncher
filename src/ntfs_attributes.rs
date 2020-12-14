@@ -9,6 +9,8 @@ use ntfs_data::*;
 use ntfs_file_name::*;
 use ntfs_standard_information::*;
 
+use winapi::um::winnt::HANDLE;
+
 /**
 reference: [https://docs.microsoft.com/en-us/windows/win32/devnotes/attribute-record-header](https://docs.microsoft.com/en-us/windows/win32/devnotes/attribute-record-header)
 
@@ -188,11 +190,11 @@ pub struct NtfsAttributeList {
     pub attributes: Vec<NtfsAttribute>,
 }
 impl NtfsAttributeList {
-    pub fn new(bytes: &[u8]) -> Result<Vec<NtfsAttribute>, std::io::Error> {
+    pub fn new(bytes: &[u8], volume_handle: HANDLE) -> Result<Vec<NtfsAttribute>, std::io::Error> {
         let mut attributes: Vec<NtfsAttribute> = Vec::new();
         let mut offset: usize = 0;
         loop {
-            match NtfsAttribute::new(&bytes[offset..])? {
+            match NtfsAttribute::new(&bytes[offset..], volume_handle)? {
                 Some(attribute) => {
                     offset += attribute.header.record_length as usize;
                     attributes.push(attribute);
@@ -210,7 +212,10 @@ pub struct NtfsAttribute {
     pub metadata: NtfsAttributeType,
 }
 impl NtfsAttribute {
-    pub fn new(bytes: &[u8]) -> Result<Option<NtfsAttribute>, std::io::Error> {
+    pub fn new(
+        bytes: &[u8],
+        volume_handle: HANDLE,
+    ) -> Result<Option<NtfsAttribute>, std::io::Error> {
         let header = NtfsAttributeHeader::new(bytes)?;
         match &header.attribute_type {
             &ATTRIBUTE_TYPE_STANDARD_INFORMATION => match &header.union_data {
@@ -225,38 +230,27 @@ impl NtfsAttribute {
                 }
             },
             &ATTRIBUTE_TYPE_ATTRIBUTE_LIST => match &header.union_data {
-                // todo: process each attribute that is in this
+                // todo: process each attribute in these lists
                 NtfsAttributeUnion::Resident(v) => {
                     let length: usize = v.value_length as usize;
                     let metadata =
-                        NtfsAttributeType::AttributeList(NtfsAttributeListAttribute::new(
+                        NtfsAttributeType::AttributeList(NtfsAttributeListAttribute::new_resident(
                             &bytes[v.value_offset as usize..v.value_offset as usize + length],
-                            true,
                         )?);
 
                     Ok(Some(NtfsAttribute { header, metadata }))
                 }
                 NtfsAttributeUnion::NonResident(v) => {
-                    /*
-                       For a non-resident attribute list the values are no in the mft.
-                       todo could we follow the data run and retrieve more info??
-                    */
                     let length: usize = header.record_length as usize - v.data_run_offset as usize;
-                    let metadata =
-                        NtfsAttributeType::AttributeList(NtfsAttributeListAttribute::new(
+                    let metadata = NtfsAttributeType::AttributeList(
+                        NtfsAttributeListAttribute::new_non_resident(
                             &bytes[v.data_run_offset as usize..v.data_run_offset as usize + length],
-                            false,
-                        )?);
+                            (v.highest_vcn - v.starting_vcn) as u8,
+                            v.valid_data_length as u64,
+                            volume_handle,
+                        )?,
+                    );
 
-                    // NtfsAttributeType::AttributeList(vec![NtfsAttributeListAttribute {
-                    //     attribute_type: 0x42,
-                    //     record_length: 0x42,
-                    //     name_length: 0x42,
-                    //     name_offset: 0x42,
-                    //     starting_vcn: 0x42,
-                    //     base_frn: 0x42,
-                    //     attribute_name: Some(String::from("NonResident$ATTRIBUTE_LIST")),
-                    // }]);
                     Ok(Some(NtfsAttribute { header, metadata }))
                 }
             },
@@ -323,8 +317,10 @@ impl NtfsAttribute {
                     "+-+-+-+ unprocessed attribute type {:#x} +-+-+-+ \n{:#?}",
                     &header.attribute_type, &header
                 );
-                panic!("add me");
-                // Ok(None)
+                #[cfg(debug_assertions)]
+                panic!("unknown attribute");
+
+                Ok(None)
             }
         }
     }
@@ -345,7 +341,20 @@ pub enum NtfsAttributeType {
     Ea,
     LoggedUtilityStream, // we ignore for now: https://flatcap.org/linux-ntfs/ntfs/attributes/logged_utility_stream.html
 }
-
+impl NtfsAttributeType {
+    pub fn is_attribute_list(&self) -> bool {
+        match self {
+            NtfsAttributeType::AttributeList(_) => true,
+            _ => false,
+        }
+    }
+    pub fn get_attribute_list(&self) -> Option<&Vec<NtfsAttributeListAttribute>> {
+        match self {
+            NtfsAttributeType::AttributeList(x) => Some(x),
+            _ => None,
+        }
+    }
+}
 #[derive(Debug)]
 pub enum NtfsAttributeUnion {
     Resident(ResidentAttribute),

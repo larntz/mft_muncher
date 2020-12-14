@@ -19,38 +19,48 @@ fn main() {
                         start.elapsed().as_millis()
                     );
 
-                    // let _ = std::process::Command::new("cmd.exe")
-                    //     .arg("/c")
-                    //     .arg("pause")
-                    //     .status();
+                    let _ = std::process::Command::new("cmd.exe")
+                        .arg("/c")
+                        .arg("pause")
+                        .status();
 
+                    // todo answer question
+                    // 1. Can a file record have more than one attribute list?
+                    // todo after getting the attribute list we need to fetch the mft record (see below)
+                    // and add that attribute date to the file record.
                     for r in records {
                         if let Some(name) = r.1.file_name() {
-                            if name == "year-2019-created-2019-05-30T14_46_50.zip".to_string() {
+                            if name == "year-2019-created-2019-05-30T14_46_50.zip".to_string() || name == "en_windows_10_consumer_editions_version_2004_x64_dvd_8d28c5d7.iso".to_string() {
                                 dbg!(&r);
+                                // looking for non-resident attribute lists
+                                for attribute in
+                                    r.1.attributes
+                                        .iter()
+                                        .filter(|x| x.header.non_resident_flag == 1)
+                                {
+                                    match &attribute.metadata {
+                                        NtfsAttributeType::AttributeList(x) => {
+                                            for a in x.iter() {
+                                                if r.0 != a.base_frn {
+                                                    let c_rec = mft.get_record(a.base_frn).unwrap();
+                                                    dbg!(c_rec);
+                                                }
+                                            }
+                                        },
+                                        _ => {}
+                                    }
+                                }
                             }
                         }
-                        // looking for non-resident attribute lists
-                        // for attribute in
-                        //     r.1.attributes
-                        //         .iter()
-                        //         .filter(|x| x.header.non_resident_flag == 1)
-                        // {
-                        //     match &attribute.metadata {
-                        //         NtfsAttributeType::AttributeList(x) => println!(//
-                        //             "frn: {}, name: {}",
-                        //             r.0,
-                        //             r.1.file_name().unwrap_or("No Name".to_string())
-                        //         ),
-                        //         _ => {}
-                        //     }
-                        // }
                     }
                 }
                 Err(e) => {
                     eprintln!("ERROR from get_all_ntfs_file_records => {}", e);
                 }
             }
+
+            // emtpy
+            let frns: Vec<u64> = Vec::new();
 
             // physical
             // let frns: Vec<u64> = vec![
@@ -62,7 +72,7 @@ fn main() {
             // ];
 
             // virtual
-            let frns: Vec<u64> = vec![5348024558239138, 18014398509531529];
+            //let frns: Vec<u64> = vec![5348024558239138, 18014398509531529];
             let start = Instant::now();
             for frn in frns {
                 let record = mft.get_record(frn).unwrap();

@@ -1,14 +1,15 @@
+use crate::file_record::NtfsFileRecord;
 #[allow(unused_imports)]
 use crate::file_record::{FileRecord, NtfsFileRecordHeader};
 use crate::ntfs_volume_data::NtfsVolumeData;
 use crate::usn_record::{USN_RECORD, USN_RECORD_LENGTH};
 use crate::utils::str_to_wstring;
 
-use crate::file_record::NtfsFileRecord;
 use std::collections::BTreeMap;
 use std::convert::TryInto;
 use std::io::Error;
 use std::ptr;
+use winapi::ctypes::c_void;
 use winapi::shared::minwindef::{DWORD, LPDWORD, LPVOID, MAX_PATH};
 use winapi::shared::winerror::ERROR_HANDLE_EOF;
 use winapi::um::fileapi::{CreateFileW, GetVolumeNameForVolumeMountPointW, OPEN_EXISTING};
@@ -19,13 +20,13 @@ use winapi::um::securitybaseapi::AdjustTokenPrivileges;
 use winapi::um::winbase::{LookupPrivilegeValueW, FILE_FLAG_BACKUP_SEMANTICS};
 use winapi::um::winioctl::{
     FSCTL_ENUM_USN_DATA, FSCTL_GET_NTFS_FILE_RECORD, FSCTL_GET_NTFS_VOLUME_DATA,
-    FSCTL_READ_FILE_USN_DATA, NTFS_EXTENDED_VOLUME_DATA, NTFS_FILE_RECORD_INPUT_BUFFER,
-    NTFS_FILE_RECORD_OUTPUT_BUFFER, NTFS_VOLUME_DATA_BUFFER,
+    FSCTL_GET_RETRIEVAL_POINTERS, FSCTL_READ_FILE_USN_DATA, NTFS_EXTENDED_VOLUME_DATA,
+    NTFS_FILE_RECORD_INPUT_BUFFER, NTFS_FILE_RECORD_OUTPUT_BUFFER, NTFS_VOLUME_DATA_BUFFER,
 };
-use winapi::um::winnt::{DWORDLONG, HANDLE, LARGE_INTEGER, TOKEN_PRIVILEGES, USN};
+use winapi::um::winnt::{DWORDLONG, HANDLE, LARGE_INTEGER, LONGLONG, TOKEN_PRIVILEGES, USN};
 use winapi::um::winnt::{
-    FILE_READ_EA, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, SE_PRIVILEGE_ENABLED,
-    TOKEN_ADJUST_PRIVILEGES,
+    FILE_READ_EA, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, GENERIC_READ,
+    SE_PRIVILEGE_ENABLED, TOKEN_ADJUST_PRIVILEGES,
 };
 
 #[allow(non_snake_case)]
@@ -53,11 +54,12 @@ impl MFT {
                     let root_usn = MFT::get_file_usn(&r_guid)?;
                     let mut v_guid = r_guid.clone().to_string();
                     v_guid.truncate(v_guid.len() - 1);
-                    let handle = MFT::get_file_read_handle(&v_guid)?;
-                    let volume_data = MFT::get_ntfs_volume_data(handle)?;
+                    let volume_handle = MFT::get_file_read_handle(&v_guid)?;
+                    let volume_data = MFT::get_ntfs_volume_data(volume_handle)?;
+
                     return Ok(MFT {
                         root_dir_frn: root_usn.FileReferenceNumber,
-                        volume_handle: handle,
+                        volume_handle,
                         volume_data,
                         file_records: BTreeMap::<u64, Vec<FileRecord>>::new(),
                     });
@@ -95,6 +97,7 @@ impl MFT {
         }
         Ok(records)
     }
+
     /*
         MFT PRIVATE FUNCTIONS
     */
@@ -134,7 +137,8 @@ impl MFT {
                 Err(last_error)
             }
             _ => {
-                let file_record = NtfsFileRecord::new(&output_buffer[12..])?;
+                let file_record =
+                    NtfsFileRecord::new(frn, &output_buffer[12..], self.volume_handle)?;
                 // todo while self.extra_segments != 0 { process_segments(self.extra_segment) }
                 Ok(file_record)
             }
@@ -419,13 +423,13 @@ impl MFT {
     Example volume GUID: `\\?\Volume{6eb8a49a-0000-0000-0000-300300000000}`
 
     */
-    fn get_file_read_handle(file: &str) -> Result<HANDLE, Error> {
+    pub fn get_file_read_handle(file: &str) -> Result<HANDLE, Error> {
         let handle = unsafe {
             CreateFileW(
                 str_to_wstring(file).as_ptr(),
-                FILE_READ_EA,
+                GENERIC_READ, // FILE_READ_EA,
                 // opening with FILE_SHARE_READ only gives a ERROR_SHARING_VIOLATION error
-                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE, //  | FILE_SHARE_DELETE,
                 ptr::null_mut(),
                 OPEN_EXISTING,
                 FILE_FLAG_BACKUP_SEMANTICS, // required to get handle for directory

@@ -1,6 +1,10 @@
 use crate::ntfs_attributes::*;
 use crate::utils::*;
 
+use crate::ntfs_attributes::ntfs_attribute_list::NtfsAttributeListAttribute;
+use crate::ntfs_attributes::NtfsAttributeType;
+use winapi::um::winnt::HANDLE;
+
 #[derive(Debug, Clone, Default)]
 pub struct FileRecord {
     pub file_name: String,
@@ -76,17 +80,37 @@ impl NtfsFileRecordHeader {
 
 #[derive(Debug)]
 pub struct NtfsFileRecord {
-    // todo create new() constructing that takes the entire file record slice and does the job
+    pub file_record_number: u64,
     pub header: NtfsFileRecordHeader,
     pub attributes: Vec<NtfsAttribute>,
 }
 
 impl NtfsFileRecord {
-    pub fn new(slice: &[u8]) -> Result<NtfsFileRecord, std::io::Error> {
+    pub fn new(
+        file_record_number: u64,
+        slice: &[u8],
+        volume_handle: HANDLE,
+    ) -> Result<NtfsFileRecord, std::io::Error> {
         let header = NtfsFileRecordHeader::new(&slice)?;
-        let attributes = NtfsAttributeList::new(&slice[header.attribute_offset as usize..])?;
+        let mut attributes =
+            NtfsAttributeList::new(&slice[header.attribute_offset as usize..], volume_handle)?;
 
-        Ok(NtfsFileRecord { header, attributes })
+        let attribute_lists: Vec<&NtfsAttribute> = attributes
+            .iter()
+            .filter(|x| x.metadata.is_attribute_list())
+            .collect();
+
+        for list in attribute_lists {
+            for item in list.metadata.get_attribute_list().unwrap() {
+                // get file record for attributes in list where base_frn != frn.
+            }
+        }
+
+        Ok(NtfsFileRecord {
+            file_record_number,
+            header,
+            attributes,
+        })
     }
 
     pub fn file_name(&self) -> Option<String> {

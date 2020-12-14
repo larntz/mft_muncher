@@ -13,5 +13,8 @@ pub mod mft;
 /// this module contains the ntfs USN_RECORD data structure definition.
 mod usn_record;
 
+/// This module contains functions for interacting with NTFS volumes.
+mod ntfs_utils;
+
 /// This module contains utility functions used through this library.
 mod utils;

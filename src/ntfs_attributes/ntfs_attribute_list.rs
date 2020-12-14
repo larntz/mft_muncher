@@ -1,5 +1,9 @@
 use crate::ntfs_attributes::ATTRIBUTE_END;
+use crate::ntfs_utils::*;
 use crate::utils::*;
+
+use crate::ntfs_attributes::ntfs_standard_information::NtfsStandardInformationAttribute;
+use winapi::um::winnt::HANDLE;
 
 /**
 This struct brought to you by the Dept. of Redundancy Dept.
@@ -31,17 +35,7 @@ pub struct NtfsAttributeListAttribute {
 }
 
 impl NtfsAttributeListAttribute {
-    pub fn new(
-        bytes: &[u8],
-        resident: bool,
-    ) -> Result<Vec<NtfsAttributeListAttribute>, std::io::Error> {
-        match resident {
-            true => NtfsAttributeListAttribute::new_resident(bytes),
-            false => NtfsAttributeListAttribute::new_non_resident(bytes),
-        }
-    }
-
-    fn new_resident(bytes: &[u8]) -> Result<Vec<NtfsAttributeListAttribute>, std::io::Error> {
+    pub fn new_resident(bytes: &[u8]) -> Result<Vec<NtfsAttributeListAttribute>, std::io::Error> {
         let mut offset: usize = 0;
         let mut list: Vec<NtfsAttributeListAttribute> = Vec::new();
 
@@ -74,41 +68,74 @@ impl NtfsAttributeListAttribute {
                 attribute_name,
             });
 
-            offset += record_length as usize;
             if record_length == 0 {
                 break;
             }
+            offset += record_length as usize;
         }
 
         Ok(list)
     }
 
-    fn new_non_resident(bytes: &[u8]) -> Result<Vec<NtfsAttributeListAttribute>, std::io::Error> {
-        #[cfg(debug_assertions)]
-        {
-            println!(
-                "NtfsAttributeListAttribute::new_non_resident(): got {} bytes \n{:?}",
-                bytes.len(),
-                &bytes
-            );
-
-            let run_length_bytes = &bytes[0] % 0x10;
-            let run_offset_bytes = &bytes[0] / 0x10;
-
-            println!(
-                    "header (&bytes[0]) {:#x}, run length specified in  {} bytes, run offset specified in  {} bytes",
-                    &bytes[0], run_length_bytes, run_offset_bytes
-                );
+    pub fn new_non_resident(
+        bytes: &[u8],
+        clusters: u8,
+        data_length: u64,
+        volume_handle: HANDLE,
+    ) -> Result<Vec<NtfsAttributeListAttribute>, std::io::Error> {
+        if bytes.len() > 8 {
+            panic!("not prepared for more than 8 bytes")
         }
 
-        Ok(vec![NtfsAttributeListAttribute {
-            attribute_type: 0x42,
-            record_length: 0x42,
-            name_length: 0x42,
-            name_offset: 0x42,
-            starting_vcn: 0x42,
-            base_frn: 0x42,
-            attribute_name: Some(String::from("NonResident$ATTRIBUTE_LIST")),
-        }])
+        let run_length_bytes = &bytes[0] % 0x10;
+        let run_length_end = run_length_bytes / 1;
+        let run_offset_bytes = &bytes[0] / 0x10;
+        let run_offset_end = run_length_end + run_offset_bytes + 1;
+
+        let mut offset_bytes = [0u8; 8];
+        offset_bytes[..run_offset_bytes as usize]
+            .copy_from_slice(&bytes[2..run_offset_end as usize]);
+        let offset = i64::from_le_bytes(offset_bytes);
+
+        // read clusters from disk for each data run, but right now we are only looking for 1 run
+        // todo eliminate this bug
+        let x = read_clusters(offset as u64, clusters, data_length, volume_handle);
+        let mut list: Vec<NtfsAttributeListAttribute> = Vec::new();
+        let mut offset: usize = 0;
+        while offset < x.len() {
+            let attribute_type = u32::from_le_bytes(get_bytes_4(&x[offset + 0x00..])?);
+            let record_length = u16::from_le_bytes(get_bytes_2(&x[offset + 0x04..])?);
+            let name_length = u8::from_le_bytes(get_bytes_1(&x[offset + 0x06..])?);
+            let name_offset = u8::from_le_bytes(get_bytes_1(&x[offset + 0x07..])?);
+            let starting_vcn = u64::from_le_bytes(get_bytes_8(&x[offset + 0x08..])?);
+            let base_frn = u64::from_le_bytes(get_bytes_8(&x[offset + 0x10..])?);
+            let attribute_name = if name_length == 0 {
+                None
+            } else {
+                let attribute_name_u16: Vec<u16> = x[offset + name_offset as usize
+                    ..offset + name_offset as usize + (2 * name_length) as usize]
+                    .chunks_exact(2)
+                    .map(|x| u16::from_le_bytes(get_bytes_2(&x).expect("attribute_name_u16 error")))
+                    .collect();
+                Some(String::from_utf16_lossy(&attribute_name_u16))
+            };
+
+            list.push(NtfsAttributeListAttribute {
+                attribute_type,
+                record_length,
+                name_length,
+                name_offset,
+                starting_vcn,
+                base_frn,
+                attribute_name,
+            });
+
+            if record_length == 0 {
+                break;
+            }
+            offset += record_length as usize;
+        }
+
+        Ok(list)
     }
 }
