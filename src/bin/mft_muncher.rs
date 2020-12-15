@@ -32,24 +32,34 @@ fn main() {
                         if let Some(name) = r.1.file_name() {
                             if name == "year-2019-created-2019-05-30T14_46_50.zip".to_string() || name == "en_windows_10_consumer_editions_version_2004_x64_dvd_8d28c5d7.iso".to_string() {
                                 dbg!(&r);
-                                // looking for non-resident attribute lists
-                                for attribute in
-                                    r.1.attributes
-                                        .iter()
-                                        .filter(|x| x.header.non_resident_flag == 1)
-                                {
+                                println!("record has {} attributes", &r.1.attributes.len());
+                                for attribute in &r.1.attributes {
                                     match &attribute.metadata {
                                         NtfsAttributeType::AttributeList(x) => {
-                                            for a in x.iter() {
-                                                if r.0 != a.base_frn {
-                                                    let c_rec = mft.get_record(a.base_frn).unwrap();
-                                                    dbg!(c_rec);
-                                                }
-                                            }
-                                        },
+                                            println!("record attribute list has {} attributes", x.len());
+                                        }
                                         _ => {}
                                     }
                                 }
+                            }
+                        }
+                        // looking for non-resident attribute lists
+                        for attribute in
+                            r.1.attributes
+                                .iter()
+                                .filter(|x| x.header.non_resident_flag == 1)
+                        {
+                            match &attribute.metadata {
+                                NtfsAttributeType::ReparsePoint(_) => {
+                                    dbg!(&r);
+                                    // for a in x.iter() {
+                                    //     if r.0 != a.base_frn {
+                                    //         let c_rec = mft.get_record(a.base_frn).unwrap();
+                                    //         dbg!(c_rec);
+                                    //     }
+                                    // }
+                                }
+                                _ => {}
                             }
                         }
                     }

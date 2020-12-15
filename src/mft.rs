@@ -78,7 +78,14 @@ impl MFT {
     pub fn get_record(&self, frn: u64) -> Result<NtfsFileRecord, std::io::Error> {
         // may want to create two sets of functions.  one that returns the all parts
         // of the ntfs records and another that returns the abbreviated ntfs record.
-        self.get_ntfs_file_record(frn)
+        MFT::get_ntfs_file_record(frn, self.volume_handle)
+    }
+
+    pub fn get_record_ext(
+        frn: u64,
+        volume_handle: HANDLE,
+    ) -> Result<NtfsFileRecord, std::io::Error> {
+        MFT::get_ntfs_file_record(frn, volume_handle)
     }
 
     pub fn get_all_ntfs_file_records(
@@ -89,7 +96,7 @@ impl MFT {
         match MFT::get_all_file_usn(&self) {
             Ok(frns) => {
                 for frn in frns {
-                    let rec = self.get_ntfs_file_record(frn)?;
+                    let rec = MFT::get_ntfs_file_record(frn, self.volume_handle)?;
                     records.insert(frn, rec);
                 }
             }
@@ -102,7 +109,7 @@ impl MFT {
         MFT PRIVATE FUNCTIONS
     */
 
-    fn get_ntfs_file_record(&self, frn: u64) -> Result<NtfsFileRecord, Error> {
+    fn get_ntfs_file_record(frn: u64, volume_handle: HANDLE) -> Result<NtfsFileRecord, Error> {
         let frn_l = unsafe {
             let mut large_i: LARGE_INTEGER = std::mem::zeroed::<LARGE_INTEGER>();
             *large_i.QuadPart_mut() = frn as i64;
@@ -119,7 +126,7 @@ impl MFT {
         let mut bytes_read = 0u32;
         match unsafe {
             DeviceIoControl(
-                self.volume_handle,
+                volume_handle,
                 FSCTL_GET_NTFS_FILE_RECORD,
                 &input_buffer as *const NTFS_FILE_RECORD_INPUT_BUFFER as LPVOID,
                 std::mem::size_of::<NTFS_FILE_RECORD_INPUT_BUFFER>() as DWORD,
@@ -137,8 +144,7 @@ impl MFT {
                 Err(last_error)
             }
             _ => {
-                let file_record =
-                    NtfsFileRecord::new(frn, &output_buffer[12..], self.volume_handle)?;
+                let file_record = NtfsFileRecord::new(frn, &output_buffer[12..], volume_handle)?;
                 // todo while self.extra_segments != 0 { process_segments(self.extra_segment) }
                 Ok(file_record)
             }

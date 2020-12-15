@@ -2,7 +2,6 @@ use crate::ntfs_attributes::ATTRIBUTE_END;
 use crate::ntfs_utils::*;
 use crate::utils::*;
 
-use crate::ntfs_attributes::ntfs_standard_information::NtfsStandardInformationAttribute;
 use winapi::um::winnt::HANDLE;
 
 /**
@@ -79,28 +78,14 @@ impl NtfsAttributeListAttribute {
 
     pub fn new_non_resident(
         bytes: &[u8],
-        clusters: u8,
+        vcn_count: u8,
         data_length: u64,
         volume_handle: HANDLE,
     ) -> Result<Vec<NtfsAttributeListAttribute>, std::io::Error> {
-        if bytes.len() > 8 {
-            panic!("not prepared for more than 8 bytes")
-        }
-
-        let run_length_bytes = &bytes[0] % 0x10;
-        let run_length_end = run_length_bytes / 1;
-        let run_offset_bytes = &bytes[0] / 0x10;
-        let run_offset_end = run_length_end + run_offset_bytes + 1;
-
-        let mut offset_bytes = [0u8; 8];
-        offset_bytes[..run_offset_bytes as usize]
-            .copy_from_slice(&bytes[2..run_offset_end as usize]);
-        let offset = i64::from_le_bytes(offset_bytes);
-
-        // read clusters from disk for each data run, but right now we are only looking for 1 run
-        // todo eliminate this bug
-        let x = read_clusters(offset as u64, clusters, data_length, volume_handle);
         let mut list: Vec<NtfsAttributeListAttribute> = Vec::new();
+        let x = load_data_runs(&bytes, vcn_count, data_length, volume_handle)?;
+
+        // loop to process data read from disk
         let mut offset: usize = 0;
         while offset < x.len() {
             let attribute_type = u32::from_le_bytes(get_bytes_4(&x[offset + 0x00..])?);
@@ -135,7 +120,6 @@ impl NtfsAttributeListAttribute {
             }
             offset += record_length as usize;
         }
-
         Ok(list)
     }
 }

@@ -1,12 +1,15 @@
 pub mod ntfs_attribute_list;
 pub mod ntfs_data;
 pub mod ntfs_file_name;
+pub mod ntfs_reparse_point;
 pub mod ntfs_standard_information;
 
 use crate::ntfs_attributes::ntfs_attribute_list::NtfsAttributeListAttribute;
 use crate::utils::*;
+
 use ntfs_data::*;
 use ntfs_file_name::*;
+use ntfs_reparse_point::*;
 use ntfs_standard_information::*;
 
 use winapi::um::winnt::HANDLE;
@@ -245,7 +248,7 @@ impl NtfsAttribute {
                     let metadata = NtfsAttributeType::AttributeList(
                         NtfsAttributeListAttribute::new_non_resident(
                             &bytes[v.data_run_offset as usize..v.data_run_offset as usize + length],
-                            (v.highest_vcn - v.starting_vcn) as u8,
+                            (v.highest_vcn - v.starting_vcn + 1) as u8,
                             v.valid_data_length as u64,
                             volume_handle,
                         )?,
@@ -295,10 +298,28 @@ impl NtfsAttribute {
                 header,
                 metadata: NtfsAttributeType::Bitmap,
             })),
-            &ATTRIBUTE_TYPE_REPARSE_POINT => Ok(Some(NtfsAttribute {
-                header,
-                metadata: NtfsAttributeType::ReparsePoint,
-            })),
+            &ATTRIBUTE_TYPE_REPARSE_POINT => {
+                dbg!(&header);
+                match &header.union_data {
+                    NtfsAttributeUnion::Resident(v) => {
+                        let metadata = NtfsReparsePointAttribute::new_resident(
+                            &bytes[v.value_offset as usize..],
+                        )?;
+                    }
+                    NtfsAttributeUnion::NonResident(v) => {
+                        dbg!(&v);
+                        panic!("found nr reparse point buddy");
+                    }
+                }
+                Ok(Some(NtfsAttribute {
+                    header,
+                    metadata: NtfsAttributeType::ReparsePoint(NtfsReparsePointAttribute {
+                        reparse_type: 0,
+                        reparse_data_length: 0,
+                        reparse_guid: None,
+                    }),
+                }))
+            }
             &ATTRIBUTE_TYPE_EA_INFORMATION => Ok(Some(NtfsAttribute {
                 header,
                 metadata: NtfsAttributeType::EaInformation,
@@ -336,7 +357,7 @@ pub enum NtfsAttributeType {
     IndexRoot, // we ignore for now: https://flatcap.org/linux-ntfs/ntfs/attributes/index_root.html
     IndexAllocation, // we ignore for now: https://flatcap.org/linux-ntfs/ntfs/attributes/index_allocation.html
     Bitmap, // we ignore for now: https://flatcap.org/linux-ntfs/ntfs/attributes/bitmap.html
-    ReparsePoint, // todo https://flatcap.org/linux-ntfs/ntfs/attributes/reparse_point.html
+    ReparsePoint(NtfsReparsePointAttribute), // todo https://flatcap.org/linux-ntfs/ntfs/attributes/reparse_point.html
     EaInformation,
     Ea,
     LoggedUtilityStream, // we ignore for now: https://flatcap.org/linux-ntfs/ntfs/attributes/logged_utility_stream.html

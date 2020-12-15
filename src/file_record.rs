@@ -1,6 +1,7 @@
 use crate::ntfs_attributes::*;
 use crate::utils::*;
 
+use crate::mft::MFT;
 use crate::ntfs_attributes::ntfs_attribute_list::NtfsAttributeListAttribute;
 use crate::ntfs_attributes::NtfsAttributeType;
 use winapi::um::winnt::HANDLE;
@@ -100,11 +101,18 @@ impl NtfsFileRecord {
             .filter(|x| x.metadata.is_attribute_list())
             .collect();
 
+        // 34 seconds with this code
+        let mut nr_attributes: Vec<NtfsAttribute> = Vec::new();
         for list in attribute_lists {
             for item in list.metadata.get_attribute_list().unwrap() {
                 // get file record for attributes in list where base_frn != frn.
+                if item.base_frn != file_record_number {
+                    let mut nr_record = MFT::get_record_ext(item.base_frn, volume_handle)?;
+                    nr_attributes.append(&mut nr_record.attributes);
+                }
             }
         }
+        attributes.append(&mut nr_attributes);
 
         Ok(NtfsFileRecord {
             file_record_number,
