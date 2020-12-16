@@ -50,7 +50,7 @@ pub fn read_clusters(
     data_length: u64,
     volume_handle: HANDLE,
 ) -> Result<Vec<u8>, std::io::Error> {
-    // for testing I will hard code this
+    // for testing I will hard code this 4096
     // todo use the bytes per sector from system
     let mut data: Vec<u8> = Vec::new();
     let mut temp_buffer = vec![0u8; 4096];
@@ -88,8 +88,8 @@ pub fn read_clusters(
             data.append(&mut temp_buffer);
             break;
         } else {
-            if data_length - (current_cluster as u64 * 4096) < 4096 {
-                temp_buffer.truncate((data_length - (current_cluster as u64 * 4096)) as usize);
+            if data_length < (current_cluster as u64 * 4096) {
+                temp_buffer.truncate(((current_cluster as u64 * 4096) - data_length) as usize);
             }
             data.append(&mut temp_buffer);
         }

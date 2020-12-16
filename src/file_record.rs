@@ -92,6 +92,9 @@ impl NtfsFileRecord {
         slice: &[u8],
         volume_handle: HANDLE,
     ) -> Result<NtfsFileRecord, std::io::Error> {
+        // #[cfg(debug_assertions)]
+        // println!("processing file record number {}", file_record_number);
+
         let header = NtfsFileRecordHeader::new(&slice)?;
         let mut attributes =
             NtfsAttributeList::new(&slice[header.attribute_offset as usize..], volume_handle)?;

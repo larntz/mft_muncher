@@ -10,6 +10,15 @@ fn main() {
         Ok(mft) => {
             println!("got struct MFT in {} ns", start.elapsed().as_nanos());
 
+            let record = mft.get_record(224335556438395287).unwrap();
+            dbg!(record);
+            let record = mft.get_record(42502721483355890).unwrap();
+            dbg!(record);
+            let _ = std::process::Command::new("cmd.exe")
+                .arg("/c")
+                .arg("pause")
+                .status();
+
             let start = Instant::now();
             match mft.get_all_ntfs_file_records() {
                 Ok(records) => {
@@ -69,8 +78,8 @@ fn main() {
                 }
             }
 
-            // emtpy
-            let frns: Vec<u64> = Vec::new();
+            // reparse point testing
+            let frns: Vec<u64> = vec![154248287237444902, 49821070877794482, 81909218222809268];
 
             // physical
             // let frns: Vec<u64> = vec![

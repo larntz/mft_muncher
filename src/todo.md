@@ -48,3 +48,11 @@ Question? What if there needs to be multiple other ATTRIBUTE_LISTS? Maybe the re
 
 See [https://flatcap.org/linux-ntfs/ntfs/concepts/data_runs.html](https://flatcap.org/linux-ntfs/ntfs/concepts/data_runs.html)
 
+### $REPARSE_POINT Attributes
+
+There are MS defined reparse points and third party reparse points.  The third party 
+reparse points can be identified by types that could be unknown. Not sure how I might
+be able to get the structure of the reparse point data or if I'd even want to...
+
+In this app I think I will define the well known MS defined reparse points and save the 
+third party ones as just "third party" with the type code and guid. 

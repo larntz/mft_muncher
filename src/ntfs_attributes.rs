@@ -302,23 +302,26 @@ impl NtfsAttribute {
                 dbg!(&header);
                 match &header.union_data {
                     NtfsAttributeUnion::Resident(v) => {
-                        let metadata = NtfsReparsePointAttribute::new_resident(
-                            &bytes[v.value_offset as usize..],
-                        )?;
+                        let metadata = NtfsAttributeType::ReparsePoint(
+                            NtfsReparsePointAttribute::new_resident(
+                                &bytes[v.value_offset as usize..],
+                            )?,
+                        );
+                        Ok(Some(NtfsAttribute { header, metadata }))
                     }
                     NtfsAttributeUnion::NonResident(v) => {
                         dbg!(&v);
-                        panic!("found nr reparse point buddy");
+                        //unimplemented!()
+                        Ok(Some(NtfsAttribute {
+                            header,
+                            metadata: NtfsAttributeType::ReparsePoint(NtfsReparsePointAttribute {
+                                reparse_type: 0,
+                                reparse_data_length: 0,
+                                reparse_guid: None,
+                            }),
+                        }))
                     }
                 }
-                Ok(Some(NtfsAttribute {
-                    header,
-                    metadata: NtfsAttributeType::ReparsePoint(NtfsReparsePointAttribute {
-                        reparse_type: 0,
-                        reparse_data_length: 0,
-                        reparse_guid: None,
-                    }),
-                }))
             }
             &ATTRIBUTE_TYPE_EA_INFORMATION => Ok(Some(NtfsAttribute {
                 header,
