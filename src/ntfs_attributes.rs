@@ -1,16 +1,18 @@
-pub mod ntfs_attribute_list;
-pub mod ntfs_data;
-pub mod ntfs_file_name;
-pub mod ntfs_reparse_point;
-pub mod ntfs_standard_information;
+pub mod attribute_list;
+pub mod data;
+pub mod file_name;
+pub mod index_root;
+pub mod reparse_point;
+pub mod standard_information;
 
-use crate::ntfs_attributes::ntfs_attribute_list::NtfsAttributeListAttribute;
+use crate::ntfs_attributes::attribute_list::NtfsAttributeListAttribute;
 use crate::utils::*;
 
-use ntfs_data::*;
-use ntfs_file_name::*;
-use ntfs_reparse_point::*;
-use ntfs_standard_information::*;
+use data::*;
+use file_name::*;
+use index_root::*;
+use reparse_point::*;
+use standard_information::*;
 
 use winapi::um::winnt::HANDLE;
 
@@ -291,15 +293,20 @@ impl NtfsAttribute {
                     Ok(Some(NtfsAttribute { header, metadata }))
                 }
             },
-            &ATTRIBUTE_TYPE_INDEX_ROOT => {
-                #[cfg(debug_assertions)]
-                unimplemented!();
+            &ATTRIBUTE_TYPE_INDEX_ROOT => match &header.union_data {
+                // always resident
+                NtfsAttributeUnion::Resident(v) => {
+                    NtfsAttributeIndexRoot::new(&bytes[v.value_offset as usize..]);
 
-                Ok(Some(NtfsAttribute {
-                    header,
-                    metadata: NtfsAttributeType::IndexRoot,
-                }))
-            }
+                    Ok(Some(NtfsAttribute {
+                        header,
+                        metadata: NtfsAttributeType::IndexRoot,
+                    }))
+                }
+                _ => {
+                    panic!("$INDEX_ROOT should always be a resident attribute!");
+                }
+            },
             &ATTRIBUTE_TYPE_INDEX_ALLOCATION => {
                 #[cfg(debug_assertions)]
                 unimplemented!();

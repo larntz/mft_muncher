@@ -2,7 +2,7 @@ use crate::ntfs_attributes::*;
 use crate::utils::*;
 
 use crate::mft::MFT;
-use crate::ntfs_attributes::ntfs_attribute_list::NtfsAttributeListAttribute;
+use crate::ntfs_attributes::attribute_list::NtfsAttributeListAttribute;
 use crate::ntfs_attributes::NtfsAttributeType;
 use winapi::um::winnt::HANDLE;
 
