@@ -87,98 +87,36 @@ Examples of this are c:\users\bob\My Documents pointing to c:\users\bob\Document
 
 **/
 
+// https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-fscc/c8e77b37-3909-4fe6-a4ea-2b9d423b1ee4
+const IO_REPARSE_TAG_MOUNT_POINT: u32 = 0xa0000003; // Used for mount point support, specified in section 2.1.2.5.
+const IO_REPARSE_TAG_SYMLINK: u32 = 0xa000000c; // Used for symbolic link support.
+const IO_REPARSE_TAG_APPEXECLINK: u32 = 0x8000001b; // Used by Universal Windows Platform (UWP) packages to encode information that allows the application to be launched by CreateProcess.
+const IO_REPARSE_TAG_WCI: u32 = 0x80000018; // Used by the Windows Container Isolation filter.
+const IO_REPARSE_TAG_AF_UNIX: u32 = 0x80000023; // Used by the Windows Subsystem for Linux (WSL) to represent a UNIX domain socket.
+
 #[derive(Debug)]
 pub struct NtfsReparsePointAttribute {
-    pub reparse_type: u32,
-    pub reparse_data_length: u16,
+    pub reparse_type: NtfsReparseTagType,
     pub reparse_guid: Option<Vec<u8>>,
+    pub substitute_name: Option<String>,
+    pub print_name: Option<String>,
+}
+
+#[derive(Debug)]
+pub enum NtfsReparseTagType {
+    IoReparseTagMountPoint,
+    IoReparseTagSymlink { relative_path: bool },
+    IoReparseTagAppexeclink,
+    IoReparseTagWci,
+    IoReparseTagAfUnix,
+    MicrosoftUnknown { tag_type: u32 },
+    NonMsUnknown { tag_type: u32 },
 }
 
 impl NtfsReparsePointAttribute {
     pub fn new_resident(bytes: &[u8]) -> Result<NtfsReparsePointAttribute, std::io::Error> {
-        let rpp = NtfsReparsePointAttribute {
-            reparse_type: u32::from_le_bytes(get_bytes_4(&bytes[0x00..])?),
-            reparse_data_length: u16::from_le_bytes(get_bytes_2(&bytes[0x04..])?),
-            reparse_guid: None,
-        };
-
-        // todo process well known MS reparse types.
-        if rpp.reparse_type & 0b10000000_00000000_00000000_00000000 == 0 {
-            println!("non microsoft reparse");
-            use std::convert::TryInto;
-            let guid_bytes: [u8; 16] = bytes[0x08..0x18].try_into().expect("trying to make a guid");
-            let guid = u128::from_le_bytes(guid_bytes);
-            println!("guid: {:#x}", guid);
-        } else {
-            println!("microsoft reparse");
-            println!("reparse type {:x}", rpp.reparse_type);
-            println!("reparse length {}", rpp.reparse_data_length);
-
-            match rpp.reparse_type {
-                0xA000000C => {
-                    let substitute_name_offset = u16::from_le_bytes(get_bytes_2(&bytes[0x08..])?);
-                    let substitute_name_length = u16::from_le_bytes(get_bytes_2(&bytes[0x0a..])?);
-                    println!(
-                        "sub name offset {}, sub name length {}",
-                        substitute_name_offset, substitute_name_length
-                    );
-
-                    // this name string can be null terminated
-                    // this is the actual target file/directory the reparse point points to...
-                    let mut _end = if substitute_name_length as usize <= bytes.len() {
-                        substitute_name_length as usize
-                    } else {
-                        bytes.len()
-                    };
-
-                    let sub_name_u16: Vec<u16> = bytes[0x14 + substitute_name_offset as usize..]
-                        .chunks_exact(2)
-                        .map(|x| u16::from_le_bytes(get_bytes_2(&x).expect("filename_u16 error")))
-                        .collect();
-                    println!("sub_name_u16: {:?}", sub_name_u16);
-                    let sub_name_u16: &[u16] = sub_name_u16
-                        .split(|x| *x == 0 || *x == 65535)
-                        .next()
-                        .unwrap();
-                    println!("sub_name_u16: {:?}", sub_name_u16);
-                    let print_name_offset = u16::from_le_bytes(get_bytes_2(&bytes[0x0c..])?);
-                    let print_name_length = u16::from_le_bytes(get_bytes_2(&bytes[0x0e..])?);
-                    println!(
-                        "print_name_offset {}, print name length {}",
-                        print_name_offset, print_name_length,
-                    );
-
-                    // this name string can be null terminated
-                    // this is the actual target file/directory the reparse point points to...
-                    let print_name_u16: Vec<u16> = bytes[0x14 + print_name_offset as usize..]
-                        .chunks_exact(2)
-                        .map(|x| u16::from_le_bytes(get_bytes_2(&x).expect("filename_u16 error")))
-                        .collect();
-                    println!("print_name_u16: {:?}", print_name_u16);
-                    let print_name_u16: &[u16] = print_name_u16.split(|x| *x == 0).next().unwrap();
-                    println!("print_name_u16: {:?}", print_name_u16);
-                    println!(
-                        "subname: {}",
-                        String::from_utf16(&sub_name_u16).expect("pens")
-                    );
-                    println!("subname: {}\n", String::from_utf16_lossy(&sub_name_u16));
-                    println!("printname: {}\n", String::from_utf16_lossy(&print_name_u16));
-                    println!(
-                        "rpp data {:x?}\n\n\n",
-                        &bytes[0x08..0x08 + rpp.reparse_data_length as usize]
-                    );
-
-                    // testing
-                    // let _ = std::process::Command::new("cmd.exe")
-                    //     .arg("/c")
-                    //     .arg("pause")
-                    //     .status();
-                }
-                _ => {}
-            }
-        }
-
-        Ok(rpp)
+        let reparse_type_value = u32::from_le_bytes(get_bytes_4(&bytes)?);
+        NtfsReparsePointAttribute::process_reparse_data(&bytes, reparse_type_value)
     }
     pub fn new_non_resident(
         bytes: &[u8],
@@ -186,6 +124,135 @@ impl NtfsReparsePointAttribute {
         data_length: u64,
         volume_handle: HANDLE,
     ) -> Result<NtfsReparsePointAttribute, std::io::Error> {
-        unimplemented!()
+        let data = load_data_runs(&bytes, vcn_count, data_length, volume_handle)?;
+        let reparse_type_value = u32::from_le_bytes(get_bytes_4(&data)?);
+        NtfsReparsePointAttribute::process_reparse_data(&data, reparse_type_value)
+    }
+
+    fn process_reparse_data(
+        bytes: &[u8],
+        reparse_type_value: u32,
+    ) -> Result<NtfsReparsePointAttribute, std::io::Error> {
+        if NtfsReparsePointAttribute::is_ms_reparse(reparse_type_value) {
+            match reparse_type_value {
+                IO_REPARSE_TAG_MOUNT_POINT => {
+                    // IO_REPARSE_TAG_MOUNT_POINT path buffer offset is 0x10,
+                    let path_buffer_offset: usize = 0x10;
+                    let sub_name_offset: usize = 0x08; // offset to the sub name offset
+                    let print_name_offset: usize = 0x0c; // offset to the print name offset
+                    let substitute_name: String = NtfsReparsePointAttribute::get_string(
+                        &bytes,
+                        sub_name_offset,
+                        path_buffer_offset,
+                    )?;
+                    let print_name: String = NtfsReparsePointAttribute::get_string(
+                        &bytes,
+                        print_name_offset,
+                        path_buffer_offset,
+                    )?;
+
+                    Ok(NtfsReparsePointAttribute {
+                        reparse_type: NtfsReparseTagType::IoReparseTagMountPoint,
+                        reparse_guid: None,
+                        substitute_name: Some(substitute_name),
+                        print_name: Some(print_name),
+                    })
+                }
+                IO_REPARSE_TAG_SYMLINK => {
+                    // but IO_REPARSE_TAG_SYMLINK has an extra 4 byte flag field
+                    let flag_buffer_offset: usize = 0x10;
+                    let path_buffer_offset: usize = 0x14;
+                    let sub_name_offset: usize = 0x08; // offset to the sub name offset
+                    let print_name_offset: usize = 0x0c; // offset to the print name offset
+                    let substitute_name: String = NtfsReparsePointAttribute::get_string(
+                        &bytes,
+                        sub_name_offset,
+                        path_buffer_offset,
+                    )?;
+                    let print_name: String = NtfsReparsePointAttribute::get_string(
+                        &bytes,
+                        print_name_offset,
+                        path_buffer_offset,
+                    )?;
+                    let flags = u32::from_le_bytes(get_bytes_4(&bytes[flag_buffer_offset..])?);
+                    Ok(NtfsReparsePointAttribute {
+                        reparse_type: NtfsReparseTagType::IoReparseTagSymlink {
+                            relative_path: if flags == 1 { true } else { false },
+                        },
+                        reparse_guid: None,
+                        substitute_name: Some(substitute_name),
+                        print_name: Some(print_name),
+                    })
+                }
+                IO_REPARSE_TAG_APPEXECLINK => Ok(NtfsReparsePointAttribute {
+                    reparse_type: NtfsReparseTagType::IoReparseTagAppexeclink,
+                    reparse_guid: None,
+                    substitute_name: None,
+                    print_name: None,
+                }),
+                IO_REPARSE_TAG_WCI => Ok(NtfsReparsePointAttribute {
+                    reparse_type: NtfsReparseTagType::IoReparseTagWci,
+                    reparse_guid: None,
+                    substitute_name: None,
+                    print_name: None,
+                }),
+                IO_REPARSE_TAG_AF_UNIX => Ok(NtfsReparsePointAttribute {
+                    reparse_type: NtfsReparseTagType::IoReparseTagAfUnix,
+                    reparse_guid: None,
+                    substitute_name: None,
+                    print_name: None,
+                }),
+                _ => {
+                    #[cfg(debug_assertions)]
+                    {
+                        println!("unknown MS reparse tag: {:#x}", reparse_type_value);
+                        let _ = std::process::Command::new("cmd.exe")
+                            .arg("/c")
+                            .arg("pause")
+                            .status();
+                    }
+
+                    Ok(NtfsReparsePointAttribute {
+                        reparse_type: NtfsReparseTagType::MicrosoftUnknown {
+                            tag_type: reparse_type_value,
+                        },
+                        reparse_guid: None,
+                        substitute_name: None,
+                        print_name: None,
+                    })
+                }
+            }
+        } else {
+            use std::convert::TryInto;
+            let guid_bytes: Vec<u8> = bytes[0x08..0x18].try_into().expect("trying to make a guid");
+            Ok(NtfsReparsePointAttribute {
+                reparse_type: NtfsReparseTagType::NonMsUnknown {
+                    tag_type: reparse_type_value,
+                },
+                reparse_guid: Some(guid_bytes),
+                substitute_name: None,
+                print_name: None,
+            })
+        }
+    }
+
+    fn is_ms_reparse(reparse_type: u32) -> bool {
+        // signifies this reparse point belongs to Microsoft
+        reparse_type & 0b10000000_00000000_00000000_00000000 != 0
+    }
+
+    fn get_string(
+        bytes: &[u8],
+        offset: usize,
+        path_offset: usize,
+    ) -> Result<String, std::io::Error> {
+        let name_offset = u16::from_le_bytes(get_bytes_2(&bytes[offset..])?) as usize + path_offset;
+        let name_length = u16::from_le_bytes(get_bytes_2(&bytes[offset + 0x02..])?) as usize;
+        let name_u16: Vec<u16> = bytes[name_offset..name_offset + name_length]
+            .chunks_exact(2)
+            .map(|x| u16::from_le_bytes(get_bytes_2(&x).unwrap_or([0, 0]))) // .expect("filename_u16 error")))
+            .collect();
+
+        Ok(String::from_utf16(&name_u16).unwrap_or("".to_string()))
     }
 }

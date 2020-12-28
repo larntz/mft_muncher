@@ -268,10 +268,15 @@ impl NtfsAttribute {
                     Err(std::io::Error::from(std::io::ErrorKind::InvalidData))
                 }
             },
-            &ATTRIBUTE_TYPE_OBJECT_ID => Ok(Some(NtfsAttribute {
-                header,
-                metadata: NtfsAttributeType::ObjectID,
-            })),
+            &ATTRIBUTE_TYPE_OBJECT_ID => {
+                #[cfg(debug_assertions)]
+                unimplemented!();
+
+                Ok(Some(NtfsAttribute {
+                    header,
+                    metadata: NtfsAttributeType::ObjectID,
+                }))
+            }
             &ATTRIBUTE_TYPE_DATA => match &header.union_data {
                 NtfsAttributeUnion::Resident(v) => {
                     let metadata = NtfsAttributeType::Data(NtfsDataAttribute::new(
@@ -286,55 +291,80 @@ impl NtfsAttribute {
                     Ok(Some(NtfsAttribute { header, metadata }))
                 }
             },
-            &ATTRIBUTE_TYPE_INDEX_ROOT => Ok(Some(NtfsAttribute {
-                header,
-                metadata: NtfsAttributeType::IndexRoot,
-            })),
-            &ATTRIBUTE_TYPE_INDEX_ALLOCATION => Ok(Some(NtfsAttribute {
-                header,
-                metadata: NtfsAttributeType::IndexAllocation,
-            })),
-            &ATTRIBUTE_TYPE_BITMAP => Ok(Some(NtfsAttribute {
-                header,
-                metadata: NtfsAttributeType::Bitmap,
-            })),
-            &ATTRIBUTE_TYPE_REPARSE_POINT => {
-                dbg!(&header);
-                match &header.union_data {
-                    NtfsAttributeUnion::Resident(v) => {
-                        let metadata = NtfsAttributeType::ReparsePoint(
-                            NtfsReparsePointAttribute::new_resident(
-                                &bytes[v.value_offset as usize..],
-                            )?,
-                        );
-                        Ok(Some(NtfsAttribute { header, metadata }))
-                    }
-                    NtfsAttributeUnion::NonResident(v) => {
-                        dbg!(&v);
-                        //unimplemented!()
-                        Ok(Some(NtfsAttribute {
-                            header,
-                            metadata: NtfsAttributeType::ReparsePoint(NtfsReparsePointAttribute {
-                                reparse_type: 0,
-                                reparse_data_length: 0,
-                                reparse_guid: None,
-                            }),
-                        }))
-                    }
-                }
+            &ATTRIBUTE_TYPE_INDEX_ROOT => {
+                #[cfg(debug_assertions)]
+                unimplemented!();
+
+                Ok(Some(NtfsAttribute {
+                    header,
+                    metadata: NtfsAttributeType::IndexRoot,
+                }))
             }
-            &ATTRIBUTE_TYPE_EA_INFORMATION => Ok(Some(NtfsAttribute {
-                header,
-                metadata: NtfsAttributeType::EaInformation,
-            })),
-            &ATTRIBUTE_TYPE_EA => Ok(Some(NtfsAttribute {
-                header,
-                metadata: NtfsAttributeType::Ea,
-            })),
-            &ATTRIBUTE_TYPE_LOGGED_UTILITY_STREAM => Ok(Some(NtfsAttribute {
-                header,
-                metadata: NtfsAttributeType::LoggedUtilityStream,
-            })),
+            &ATTRIBUTE_TYPE_INDEX_ALLOCATION => {
+                #[cfg(debug_assertions)]
+                unimplemented!();
+
+                Ok(Some(NtfsAttribute {
+                    header,
+                    metadata: NtfsAttributeType::IndexAllocation,
+                }))
+            }
+            &ATTRIBUTE_TYPE_BITMAP => {
+                #[cfg(debug_assertions)]
+                unimplemented!();
+
+                Ok(Some(NtfsAttribute {
+                    header,
+                    metadata: NtfsAttributeType::Bitmap,
+                }))
+            }
+            &ATTRIBUTE_TYPE_REPARSE_POINT => match &header.union_data {
+                NtfsAttributeUnion::Resident(v) => {
+                    let metadata = NtfsAttributeType::ReparsePoint(
+                        NtfsReparsePointAttribute::new_resident(&bytes[v.value_offset as usize..])?,
+                    );
+                    Ok(Some(NtfsAttribute { header, metadata }))
+                }
+                NtfsAttributeUnion::NonResident(v) => {
+                    let length: usize = header.record_length as usize - v.data_run_offset as usize;
+                    let metadata = NtfsAttributeType::ReparsePoint(
+                        NtfsReparsePointAttribute::new_non_resident(
+                            &bytes[v.data_run_offset as usize..v.data_run_offset as usize + length],
+                            (v.highest_vcn - v.starting_vcn + 1) as u8,
+                            v.valid_data_length as u64,
+                            volume_handle,
+                        )?,
+                    );
+                    Ok(Some(NtfsAttribute { header, metadata }))
+                }
+            },
+            &ATTRIBUTE_TYPE_EA_INFORMATION => {
+                #[cfg(debug_assertions)]
+                unimplemented!();
+
+                Ok(Some(NtfsAttribute {
+                    header,
+                    metadata: NtfsAttributeType::EaInformation,
+                }))
+            }
+            &ATTRIBUTE_TYPE_EA => {
+                #[cfg(debug_assertions)]
+                unimplemented!();
+
+                Ok(Some(NtfsAttribute {
+                    header,
+                    metadata: NtfsAttributeType::Ea,
+                }))
+            }
+            &ATTRIBUTE_TYPE_LOGGED_UTILITY_STREAM => {
+                #[cfg(debug_assertions)]
+                unimplemented!();
+
+                Ok(Some(NtfsAttribute {
+                    header,
+                    metadata: NtfsAttributeType::LoggedUtilityStream,
+                }))
+            }
             &ATTRIBUTE_END => Ok(None),
             _ => {
                 eprintln!(
@@ -360,7 +390,7 @@ pub enum NtfsAttributeType {
     IndexRoot, // we ignore for now: https://flatcap.org/linux-ntfs/ntfs/attributes/index_root.html
     IndexAllocation, // we ignore for now: https://flatcap.org/linux-ntfs/ntfs/attributes/index_allocation.html
     Bitmap, // we ignore for now: https://flatcap.org/linux-ntfs/ntfs/attributes/bitmap.html
-    ReparsePoint(NtfsReparsePointAttribute), // todo https://flatcap.org/linux-ntfs/ntfs/attributes/reparse_point.html
+    ReparsePoint(NtfsReparsePointAttribute),
     EaInformation,
     Ea,
     LoggedUtilityStream, // we ignore for now: https://flatcap.org/linux-ntfs/ntfs/attributes/logged_utility_stream.html
