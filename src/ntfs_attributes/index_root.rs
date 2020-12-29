@@ -75,32 +75,44 @@ impl NtfsAttributeIndexRoot {
             let entry_flag: u8 = u8::from_le_bytes(get_bytes_1(&entry[12..]).unwrap());
             println!("entry_flag {:#x}\n", entry_flag);
 
-            // if length_of_stream > 0
-            //     && length_of_entry > 0
-            //     && attribute_type == 0x30
-            //     && (entry_flag == 0x1 || entry_flag == 0x0)
-            if attribute_type == 0x30 && length_of_entry > 0 && entry_flag < 0x2 {
-                println!("\t= stream ==========================");
-                let stream_offset = entry_offset + 0x10;
-                let stream = &entry[0x10..]; // stream_offset + length_of_stream as usize];
-                println!("\tstream {:?}", &stream);
-                let parent_dir_frn = u64::from_le_bytes(get_bytes_8(&stream).unwrap());
-                println!("\tparent dir frn {}", parent_dir_frn);
-                let filename_length = u8::from_le_bytes(get_bytes_1(&stream[0x40..]).unwrap());
-                println!("\tfilename_length {}", filename_length);
-                let file_namespace = u8::from_le_bytes(get_bytes_1(&stream[0x41..]).unwrap());
-                println!("\tfile_namespace {}", file_namespace);
-                if filename_length > 0 {
-                    let filename: Vec<u16> = stream[0x42..0x42 + (2 * filename_length) as usize]
-                        .chunks_exact(2)
-                        .map(|x| {
-                            u16::from_le_bytes(get_bytes_2(&x).expect("attribute_name_u16 error"))
-                        })
-                        .collect();
-                    println!("\tfile name {}", String::from_utf16_lossy(&filename));
+            match entry_flag {
+                0x3 | 0x1 => {
+                    let sub_node_vcn = u64::from_le_bytes(
+                        get_bytes_8(&entry[length_of_entry as usize - 8..]).unwrap(),
+                    );
+                    println!("sub node vcn {}", sub_node_vcn);
+                    break;
                 }
-            } else {
-                break;
+                0x00 => {
+                    if attribute_type == 0x30 {
+                        println!("\t= stream ==========================");
+                        let stream = &entry[0x10..]; // stream_offset + length_of_stream as usize];
+                        println!("\tstream {:?}", &stream);
+                        let parent_dir_frn = u64::from_le_bytes(get_bytes_8(&stream).unwrap());
+                        println!("\tparent dir frn {}", parent_dir_frn);
+                        let filename_length =
+                            u8::from_le_bytes(get_bytes_1(&stream[0x40..]).unwrap());
+                        println!("\tfilename_length {}", filename_length);
+                        let file_namespace =
+                            u8::from_le_bytes(get_bytes_1(&stream[0x41..]).unwrap());
+                        println!("\tfile_namespace {}", file_namespace);
+                        if filename_length > 0 {
+                            let filename: Vec<u16> = stream
+                                [0x42..0x42 + (2 * filename_length) as usize]
+                                .chunks_exact(2)
+                                .map(|x| {
+                                    u16::from_le_bytes(
+                                        get_bytes_2(&x).expect("attribute_name_u16 error"),
+                                    )
+                                })
+                                .collect();
+                            println!("\tfile name {}", String::from_utf16_lossy(&filename));
+                        }
+                    }
+                }
+                _ => {
+                    break;
+                }
             }
 
             entry_offset += length_of_entry as usize;

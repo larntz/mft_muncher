@@ -308,7 +308,7 @@ impl NtfsAttribute {
                 }
             },
             &ATTRIBUTE_TYPE_INDEX_ALLOCATION => {
-                //#[cfg(debug_assertions)]
+                #[cfg(debug_assertions)]
                 unimplemented!();
 
                 Ok(Some(NtfsAttribute {
