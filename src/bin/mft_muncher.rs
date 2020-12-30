@@ -17,11 +17,11 @@ fn main() {
 
             // index_root testing
             // dbg!(mft.get_record(280349076803818884).unwrap());
-            dbg!(mft.get_record(4222124650668069).unwrap());
-            let _ = std::process::Command::new("cmd.exe")
-                .arg("/c")
-                .arg("pause")
-                .status();
+            // dbg!(mft.get_record(4222124650668069).unwrap());
+            // let _ = std::process::Command::new("cmd.exe")
+            //     .arg("/c")
+            //     .arg("pause")
+            //     .status();
 
             // dbg!(mft.get_record(281474976710686).unwrap());
             // dbg!(mft.get_record(281474976710683).unwrap());
@@ -43,10 +43,6 @@ fn main() {
                     //     .arg("pause")
                     //     .status();
 
-                    // todo answer question
-                    // 1. Can a file record have more than one attribute list?
-                    // todo after getting the attribute list we need to fetch the mft record (see below)
-                    // and add that attribute date to the file record.
                     // for r in records {
                     //     if let Some(name) = r.1.file_name() {
                     //         if name == "02072020" {

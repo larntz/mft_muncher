@@ -1,6 +1,7 @@
 pub mod attribute_list;
 pub mod data;
 pub mod file_name;
+pub mod index_allocation;
 pub mod index_root;
 pub mod reparse_point;
 pub mod standard_information;
@@ -10,6 +11,7 @@ use crate::utils::*;
 
 use data::*;
 use file_name::*;
+use index_allocation::*;
 use index_root::*;
 use reparse_point::*;
 use standard_information::*;
@@ -271,8 +273,8 @@ impl NtfsAttribute {
                 }
             },
             &ATTRIBUTE_TYPE_OBJECT_ID => {
-                #[cfg(debug_assertions)]
-                unimplemented!();
+                // #[cfg(debug_assertions)]
+                // unimplemented!();
 
                 Ok(Some(NtfsAttribute {
                     header,
@@ -307,18 +309,31 @@ impl NtfsAttribute {
                     panic!("$INDEX_ROOT should always be a resident attribute!");
                 }
             },
-            &ATTRIBUTE_TYPE_INDEX_ALLOCATION => {
-                #[cfg(debug_assertions)]
-                unimplemented!();
-
-                Ok(Some(NtfsAttribute {
+            &ATTRIBUTE_TYPE_INDEX_ALLOCATION => match &header.union_data {
+                NtfsAttributeUnion::Resident(v) => {
+                    panic!("$INDEX_ALLOCATION should always be non-resident!");
+                }
+                NtfsAttributeUnion::NonResident(v) => {
+                    dbg!(&v);
+                    NtfsAttributeIndexAllocation::new_non_resident(
+                        &bytes[v.data_run_offset as usize..],
+                        (v.highest_vcn - v.starting_vcn + 1) as u8,
+                        v.valid_data_length as u64,
+                        volume_handle,
+                    );
+                    Ok(Some(NtfsAttribute {
+                        header,
+                        metadata: NtfsAttributeType::IndexAllocation,
+                    }))
+                }
+                _ => Ok(Some(NtfsAttribute {
                     header,
                     metadata: NtfsAttributeType::IndexAllocation,
-                }))
-            }
+                })),
+            },
             &ATTRIBUTE_TYPE_BITMAP => {
-                #[cfg(debug_assertions)]
-                unimplemented!();
+                // #[cfg(debug_assertions)]
+                // unimplemented!();
 
                 Ok(Some(NtfsAttribute {
                     header,
@@ -346,8 +361,8 @@ impl NtfsAttribute {
                 }
             },
             &ATTRIBUTE_TYPE_EA_INFORMATION => {
-                #[cfg(debug_assertions)]
-                unimplemented!();
+                // #[cfg(debug_assertions)]
+                // unimplemented!();
 
                 Ok(Some(NtfsAttribute {
                     header,
@@ -355,8 +370,8 @@ impl NtfsAttribute {
                 }))
             }
             &ATTRIBUTE_TYPE_EA => {
-                #[cfg(debug_assertions)]
-                unimplemented!();
+                // #[cfg(debug_assertions)]
+                // unimplemented!();
 
                 Ok(Some(NtfsAttribute {
                     header,
@@ -364,8 +379,8 @@ impl NtfsAttribute {
                 }))
             }
             &ATTRIBUTE_TYPE_LOGGED_UTILITY_STREAM => {
-                #[cfg(debug_assertions)]
-                unimplemented!();
+                // #[cfg(debug_assertions)]
+                // unimplemented!();
 
                 Ok(Some(NtfsAttribute {
                     header,

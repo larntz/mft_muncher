@@ -12,6 +12,7 @@ use std::ptr;
 use winapi::ctypes::c_void;
 use winapi::shared::minwindef::{DWORD, LPDWORD, LPVOID, MAX_PATH};
 use winapi::shared::winerror::ERROR_HANDLE_EOF;
+use winapi::um::errhandlingapi::GetLastError;
 use winapi::um::fileapi::{CreateFileW, GetVolumeNameForVolumeMountPointW, OPEN_EXISTING};
 use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
 use winapi::um::ioapiset::DeviceIoControl;
@@ -138,8 +139,9 @@ impl MFT {
         } {
             0 => {
                 // todo handle error
-                dbg!("error FSTCL_GET_NTFS_FILE_RECORD");
-                let last_error = Error::last_os_error();
+                dbg!(unsafe { GetLastError() });
+                // let last_error = Error::last_os_error();
+                let last_error = Error::from_raw_os_error(unsafe { GetLastError() as i32 });
                 dbg!(&last_error);
                 Err(last_error)
             }
