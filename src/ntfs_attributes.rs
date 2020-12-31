@@ -237,7 +237,6 @@ impl NtfsAttribute {
                 }
             },
             &ATTRIBUTE_TYPE_ATTRIBUTE_LIST => match &header.union_data {
-                // todo: process each attribute in these lists
                 NtfsAttributeUnion::Resident(v) => {
                     let length: usize = v.value_length as usize;
                     let metadata =
@@ -315,12 +314,26 @@ impl NtfsAttribute {
                 }
                 NtfsAttributeUnion::NonResident(v) => {
                     dbg!(&v);
-                    NtfsAttributeIndexAllocation::new_non_resident(
-                        &bytes[v.data_run_offset as usize..],
-                        (v.highest_vcn - v.starting_vcn + 1) as u8,
-                        v.valid_data_length as u64,
-                        volume_handle,
-                    );
+                    // Skip entries with valid_data_length == 0
+                    // I believe this might mean the entry was deleted, but I need to do more research
+                    // https://www.forensicfocus.com/forums/general/help-understanding-index-root-and-allocation-ntfs-solved/
+                    // Header looks like:
+                    //      starting_vcn: 0,
+                    //      highest_vcn: 18446744073709551615,
+                    //      data_run_offset: 72,
+                    //      allocated_length: 0,
+                    //      file_size: 0,
+                    //      valid_data_length: 0,
+                    //      total_allocated: 13511017930227748,
+                    //
+                    if v.valid_data_length != 0 {
+                        NtfsAttributeIndexAllocation::new_non_resident(
+                            &bytes[v.data_run_offset as usize..],
+                            (v.highest_vcn - v.starting_vcn + 1) as u8,
+                            v.valid_data_length as u64,
+                            volume_handle,
+                        );
+                    }
                     Ok(Some(NtfsAttribute {
                         header,
                         metadata: NtfsAttributeType::IndexAllocation,

@@ -8,7 +8,6 @@ pub fn str_to_wstring(value: &str) -> Vec<u16> {
         .collect()
 }
 
-// todo: there must be a better way lol
 pub fn get_bytes_1(slice: &[u8]) -> Result<[u8; 1], std::io::Error> {
     if slice.len() >= 1 {
         let x: [u8; 1] = slice[..1].try_into().expect("this hurts");

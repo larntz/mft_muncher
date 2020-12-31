@@ -131,7 +131,7 @@ pub fn read_clusters(
     }
 
     println!("[===========] bytes_read {}", bytes_read);
-    Ok(temp_buffer)
-    // data.append(&mut temp_buffer);
-    // Ok(data)
+    // Ok(temp_buffer)
+    data.append(&mut temp_buffer);
+    Ok(data)
 }

@@ -97,8 +97,16 @@ impl MFT {
         match MFT::get_all_file_usn(&self) {
             Ok(frns) => {
                 for frn in frns {
-                    let rec = MFT::get_ntfs_file_record(frn, self.volume_handle)?;
-                    records.insert(frn, rec);
+                    match MFT::get_ntfs_file_record(frn, self.volume_handle) {
+                        Ok(record) => {
+                            records.insert(frn, record);
+                        }
+                        Err(e) => {
+                            dbg!(e);
+                        }
+                    }
+                    // let rec = MFT::get_ntfs_file_record(frn, self.volume_handle)?;
+                    // records.insert(frn, rec);
                 }
             }
             Err(e) => return Err(e),
@@ -139,11 +147,8 @@ impl MFT {
         } {
             0 => {
                 // todo handle error
-                dbg!(unsafe { GetLastError() });
-                // let last_error = Error::last_os_error();
-                let last_error = Error::from_raw_os_error(unsafe { GetLastError() as i32 });
-                dbg!(&last_error);
-                Err(last_error)
+                let last_error = unsafe { GetLastError() };
+                Err(std::io::Error::from_raw_os_error(last_error as i32))
             }
             _ => {
                 let file_record = NtfsFileRecord::new(frn, &output_buffer[12..], volume_handle)?;

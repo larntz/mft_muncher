@@ -16,7 +16,7 @@ fn main() {
             // dbg!(record);
 
             // index_root testing
-            // dbg!(mft.get_record(280349076803818884).unwrap());
+            dbg!(mft.get_record(280349076803818884).unwrap());
             // dbg!(mft.get_record(4222124650668069).unwrap());
             // let _ = std::process::Command::new("cmd.exe")
             //     .arg("/c")
@@ -24,7 +24,7 @@ fn main() {
             //     .status();
 
             // dbg!(mft.get_record(281474976710686).unwrap());
-            // dbg!(mft.get_record(281474976710683).unwrap());
+            dbg!(mft.get_record(281474976710683).unwrap());
             // dbg!(mft.get_record(281474976710684).unwrap());
             // dbg!(mft.get_record(499336608684703848).unwrap());
             //dbg!(mft.get_record(32651290578518124).unwrap());
